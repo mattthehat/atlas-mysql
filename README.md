@@ -8,7 +8,7 @@ A powerful, type-safe MySQL ORM with query building, transaction support, and co
 
 ## 🚀 Features
 
-- **Type-Safe**: Full TypeScript support with comprehensive type definitions
+- **Type-Safe**: Full TypeScript support with generic types for queries, comprehensive type definitions, and IntelliSense support
 - **Query Builder**: Intuitive, flexible query building with method chaining
 - **Transaction Support**: Built-in transaction management with automatic rollback
 - **Connection Pooling**: Efficient connection management using mysql2
@@ -51,6 +51,23 @@ const orm = new MySQLORM({
   port: 3306,
   connectionLimit: 10,
 });
+
+// Quick type-safe example
+interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+const { rows: users } = await orm.getData<User>({
+  table: 'users',
+  idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name', email: 'email_address' },
+  limit: 10,
+});
+
+// TypeScript knows users is User[] with full IntelliSense support
+users.forEach(user => console.log(`${user.name}: ${user.email}`));
 ```
 
 ### Environment Variables
@@ -147,36 +164,297 @@ const salesQuery: QueryConfig = {
 const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
 ```
 
-### CRUD Operations
+### Type-Safe Queries with TypeScript
+
+Atlas MySQL provides full TypeScript support with proper type inference for your database operations:
 
 ```typescript
-// Insert data
-const userId = await orm.insertData('users', {
+import { MySQLORM, QueryConfig } from 'atlas-mysql';
+
+// Define your database entity interfaces
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  active: boolean;
+  createdAt: Date;
+  updatedAt?: Date;
+}
+
+interface UserDbRow {
+  user_id: number;
+  full_name: string;
+  email_address: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+interface SalesReport {
+  userId: number;
+  userName: string;
+  totalOrders: number;
+  totalAmount: number;
+  avgAmount: number;
+}
+
+const orm = new MySQLORM(config);
+
+// Type-safe user query with proper return types
+const userQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    email: 'email_address',
+    active: 'is_active',
+    createdAt: 'created_at',
+  },
+  where: ['is_active = ?', 'created_at > ?'],
+  orderBy: 'created_at',
+  orderDirection: 'DESC',
+  limit: 50,
+};
+
+// getData with proper typing - returns typed results
+const { rows: users, count } = await orm.getData<User>(userQuery, [1, '2023-01-01']);
+users.forEach(user => {
+  // TypeScript knows user is of type User
+  console.log(`${user.name} (${user.email}) - Active: ${user.active}`);
+  // user.id is typed as number
+  // user.name is typed as string
+  // user.email is typed as string
+  // user.active is typed as boolean
+});
+
+// getFirst with proper typing - returns typed result or null
+const user = await orm.getFirst<User>(userQuery, [1, '2023-01-01']);
+if (user) {
+  // TypeScript knows user is of type User (not null)
+  console.log(`Found user: ${user.name} with ID ${user.id}`);
+  // Full IntelliSense support for user properties
+}
+
+// Complex typed query for sales reports
+const salesQuery: QueryConfig = {
+  table: 'orders',
+  idField: 'order_id',
+  fields: {
+    userId: 'orders.user_id',
+    userName: 'users.full_name',
+    totalOrders: 'COUNT(orders.order_id)',
+    totalAmount: 'SUM(orders.total_amount)',
+    avgAmount: 'AVG(orders.total_amount)',
+  },
+  joins: [
+    {
+      type: 'INNER',
+      table: 'users',
+      on: 'orders.user_id = users.user_id',
+    },
+  ],
+  where: ['orders.status = ?'],
+  groupBy: ['orders.user_id', 'users.full_name'],
+  orderBy: 'totalAmount',
+  orderDirection: 'DESC',
+  limit: 10,
+};
+
+// Type-safe sales report query
+const { rows: salesReports } = await orm.getData<SalesReport>(salesQuery, ['completed']);
+salesReports.forEach(report => {
+  // Full type safety and IntelliSense
+  console.log(`${report.userName}: ${report.totalOrders} orders, $${report.totalAmount.toFixed(2)} total`);
+  // TypeScript knows:
+  // report.userId is number
+  // report.userName is string
+  // report.totalOrders is number
+  // report.totalAmount is number (can call .toFixed())
+});
+
+// Type-safe raw queries
+interface ProductSales {
+  productName: string;
+  category: string;
+  totalSales: number;
+  averagePrice: number;
+}
+
+const productSales = await orm.rawQuery<ProductSales>(
+  `
+  SELECT 
+    p.name as productName,
+    p.category,
+    SUM(oi.quantity * oi.price) as totalSales,
+    AVG(oi.price) as averagePrice
+  FROM order_items oi
+  JOIN products p ON oi.product_id = p.product_id
+  WHERE oi.created_at >= ?
+  GROUP BY p.product_id, p.name, p.category
+  ORDER BY totalSales DESC
+  LIMIT 20
+  `,
+  ['2023-01-01']
+);
+
+// Full type safety on results
+productSales.forEach(product => {
+  console.log(`${product.productName} (${product.category}): $${product.totalSales}`);
+  // TypeScript provides full IntelliSense and type checking
+});
+```
+
+### Database Entity Mapping
+
+Create interfaces that match your database structure for maximum type safety:
+
+```typescript
+// Database table interface (matches actual DB columns)
+interface UserTable {
+  user_id: number;
+  full_name: string;
+  email_address: string;
+  is_active: 0 | 1;
+  created_at: string;
+  updated_at: string | null;
+  profile_picture: string | null;
+}
+
+// Application domain interface (what your app uses)
+interface UserEntity {
+  id: number;
+  name: string;
+  email: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date | null;
+  profilePicture: string | null;
+}
+
+// Query configuration with field mapping
+const userEntityQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    email: 'email_address',
+    isActive: 'is_active',
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    profilePicture: 'profile_picture',
+  },
+  where: ['is_active = ?'],
+  orderBy: 'created_at',
+  orderDirection: 'DESC',
+};
+
+// Type-safe query with automatic mapping
+const activeUsers = await orm.getData<UserEntity>(userEntityQuery, [1]);
+
+// Transform dates from strings to Date objects if needed
+const usersWithDates: UserEntity[] = activeUsers.rows.map(user => ({
+  ...user,
+  createdAt: new Date(user.createdAt as unknown as string),
+  updatedAt: user.updatedAt ? new Date(user.updatedAt as unknown as string) : null,
+  isActive: Boolean(user.isActive),
+}));
+```
+
+### Type-Safe CRUD Operations
+
+```typescript
+// Define interfaces for type-safe CRUD operations
+interface CreateUserData {
+  full_name: string;
+  email_address: string;
+  is_active: 0 | 1;
+  created_at: string;
+  profile_picture?: string | null;
+}
+
+interface UpdateUserData {
+  full_name?: string;
+  email_address?: string;
+  is_active?: 0 | 1;
+  updated_at: string;
+  profile_picture?: string | null;
+}
+
+interface DeleteUserConditions {
+  user_id: number;
+  is_active?: 0 | 1;
+}
+
+// Type-safe insert with interface
+const newUserData: CreateUserData = {
   full_name: 'John Doe',
   email_address: 'john@example.com',
   is_active: 1,
   created_at: new Date().toISOString(),
-});
+};
+
+const userId = await orm.insertData('users', newUserData);
 console.log(`Created user with ID: ${userId}`);
 
-// Update data
+// Type-safe update with partial interface
+const updateData: UpdateUserData = {
+  full_name: 'John Smith',
+  updated_at: new Date().toISOString(),
+};
+
 const affectedRows = await orm.updateData({
   table: 'users',
-  data: {
-    full_name: 'John Smith',
-    updated_at: new Date().toISOString(),
-  },
+  data: updateData,
   where: ['user_id = ?'],
   values: [userId],
 });
 console.log(`Updated ${affectedRows} rows`);
 
-// Delete data
-const deletedRows = await orm.deleteData('users', {
+// Type-safe delete with conditions interface
+const deleteConditions: DeleteUserConditions = {
   user_id: userId,
   is_active: 0,
-});
+};
+
+const deletedRows = await orm.deleteData('users', deleteConditions);
 console.log(`Deleted ${deletedRows} rows`);
+
+// Batch operations with type safety
+interface BatchCreateUser {
+  full_name: string;
+  email_address: string;
+  is_active: 1;
+  created_at: string;
+}
+
+const batchUsers: BatchCreateUser[] = [
+  {
+    full_name: 'Alice Johnson',
+    email_address: 'alice@example.com',
+    is_active: 1,
+    created_at: new Date().toISOString(),
+  },
+  {
+    full_name: 'Bob Wilson',
+    email_address: 'bob@example.com',
+    is_active: 1,
+    created_at: new Date().toISOString(),
+  },
+];
+
+// Type-safe batch insert (using transaction)
+const createdUserIds = await orm.withTransaction(async (transaction) => {
+  const ids: number[] = [];
+  for (const userData of batchUsers) {
+    const id = await orm.insertData('users', userData, transaction);
+    ids.push(id);
+  }
+  return ids;
+});
+
+console.log(`Created ${createdUserIds.length} users: ${createdUserIds.join(', ')}`)
 ```
 
 ### Raw SQL Queries
