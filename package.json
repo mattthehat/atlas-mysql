@@ -1,0 +1,82 @@
+{
+    "name": "querycraft-mysql",
+    "version": "1.0.0",
+    "description": "A powerful, type-safe MySQL ORM with query building, transaction support, and comprehensive logging for Node.js applications",
+    "main": "lib/index.js",
+    "types": "lib/index.d.ts",
+    "files": [
+        "lib/**/*",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "build:watch": "tsc --watch",
+        "test": "vitest",
+        "test:watch": "vitest --watch",
+        "test:coverage": "vitest --coverage",
+        "lint": "eslint src/**/*.ts",
+        "lint:fix": "eslint src/**/*.ts --fix",
+        "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+        "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+        "clean": "rimraf lib",
+        "prepublishOnly": "npm run clean && npm run build && npm test",
+        "dev": "ts-node src/mysql-orm.ts",
+        "docs:generate": "typedoc --out docs src/mysql-orm.ts",
+        "release": "npm run prepublishOnly && npm publish"
+    },
+    "keywords": [
+        "mysql",
+        "orm",
+        "database",
+        "typescript",
+        "sql",
+        "query-builder",
+        "mysql2",
+        "nodejs",
+        "transaction",
+        "logging",
+        "type-safe"
+    ],
+    "author": {
+        "name": "Matthew Rosser",
+        "email": "matt@example.com"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/mattthehat/querycraft-mysql.git"
+    },
+    "bugs": {
+        "url": "https://github.com/mattthehat/querycraft-mysql/issues"
+    },
+    "homepage": "https://github.com/mattthehat/querycraft-mysql#readme",
+    "engines": {
+        "node": ">=16.0.0"
+    },
+    "dependencies": {
+        "mysql2": "^3.6.5",
+        "chalk": "^5.3.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.5",
+        "@typescript-eslint/eslint-plugin": "^6.15.0",
+        "@typescript-eslint/parser": "^6.15.0",
+        "@vitest/coverage-v8": "^1.1.0",
+        "eslint": "^8.56.0",
+        "eslint-config-prettier": "^9.1.0",
+        "eslint-plugin-prettier": "^5.1.0",
+        "prettier": "^3.1.1",
+        "rimraf": "^5.0.5",
+        "ts-node": "^10.9.2",
+        "typedoc": "^0.25.4",
+        "typescript": "^5.3.3",
+        "vitest": "^1.1.0"
+    },
+    "peerDependencies": {
+        "mysql2": "^3.0.0"
+    },
+    "publishConfig": {
+        "access": "public"
+    }
+}

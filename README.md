@@ -1,0 +1,586 @@
+# QueryCraft MySQL
+
+[![npm version](https://badge.fury.io/js/querycraft-mysql.svg)](https://badge.fury.io/js/querycraft-mysql)
+[![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A powerful, type-safe MySQL ORM with query building, transaction support, and comprehensive logging for Node.js applications. Built with TypeScript and designed for modern Node.js development.
+
+## 🚀 Features
+
+- **Type-Safe**: Full TypeScript support with comprehensive type definitions
+- **Query Builder**: Intuitive, flexible query building with method chaining
+- **Transaction Support**: Built-in transaction management with automatic rollback
+- **Connection Pooling**: Efficient connection management using mysql2
+- **Query Logging**: Comprehensive query logging with performance monitoring
+- **SQL Injection Protection**: Parameterized queries prevent SQL injection attacks
+- **Schema Management**: Create and manage database tables programmatically
+- **Environment Configuration**: Easy setup with environment variables
+- **Error Handling**: Detailed error reporting and graceful error handling
+- **Performance Monitoring**: Track slow queries and database performance
+
+## 📦 Installation
+
+```bash
+npm install querycraft-mysql mysql2
+```
+
+Or with yarn:
+
+```bash
+yarn add querycraft-mysql mysql2
+```
+
+## 🏁 Quick Start
+
+### Basic Setup
+
+```typescript
+import { MySQLORM, createMySQLORMFromEnv } from 'querycraft-mysql';
+
+// Option 1: Create from environment variables
+// Set DB_USER, DB_PASS, DB_HOST, DB_NAME, DB_PORT in your .env file
+const orm = createMySQLORMFromEnv();
+
+// Option 2: Create with explicit configuration
+const orm = new MySQLORM({
+  host: 'localhost',
+  user: 'myuser',
+  password: 'mypassword',
+  database: 'mydatabase',
+  port: 3306,
+  connectionLimit: 10,
+});
+```
+
+### Environment Variables
+
+Create a `.env` file in your project root:
+
+```env
+DB_HOST=localhost
+DB_USER=your_username
+DB_PASS=your_password
+DB_NAME=your_database
+DB_PORT=3306
+
+# Optional query logging configuration
+QUERY_LOGGING_ENABLED=true
+QUERY_LOG_TO_FILE=true
+QUERY_LOG_PATH=./logs/queries.log
+SLOW_QUERY_THRESHOLD=1000
+NODE_ENV=development
+```
+
+## 🔍 Usage Examples
+
+### Basic Queries
+
+```typescript
+import { MySQLORM, QueryConfig } from 'querycraft-mysql';
+
+const orm = new MySQLORM(config);
+
+// Define query configuration
+const userQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    email: 'email_address',
+    active: 'is_active',
+  },
+  where: ['is_active = ?', 'created_at > ?'],
+  orderBy: 'created_at',
+  orderDirection: 'DESC',
+  limit: 50,
+};
+
+// Get multiple records with total count
+const { rows, count } = await orm.getData(userQuery, [1, '2023-01-01']);
+console.log(`Found ${count} users, showing ${rows.length}`);
+
+// Get first matching record
+const user = await orm.getFirst(userQuery, [1, '2023-01-01']);
+if (user) {
+  console.log(`User: ${user.name} (${user.email})`);
+}
+```
+
+### Advanced Query Building
+
+```typescript
+// Complex query with JOINs and GROUP BY
+const salesQuery: QueryConfig = {
+  table: 'orders',
+  idField: 'order_id',
+  fields: {
+    userId: 'orders.user_id',
+    userName: 'users.full_name',
+    totalOrders: 'COUNT(orders.order_id)',
+    totalAmount: 'SUM(orders.total_amount)',
+    avgAmount: 'AVG(orders.total_amount)',
+  },
+  joins: [
+    {
+      type: 'INNER',
+      table: 'users',
+      on: 'orders.user_id = users.user_id',
+    },
+    {
+      type: 'LEFT',
+      table: 'user_profiles',
+      on: 'users.user_id = user_profiles.user_id',
+    },
+  ],
+  where: ['orders.status = ?', 'orders.created_at >= ?'],
+  groupBy: ['orders.user_id', 'users.full_name'],
+  having: {
+    'COUNT(orders.order_id)': 5, // Users with more than 5 orders
+  },
+  orderBy: 'totalAmount',
+  orderDirection: 'DESC',
+  limit: 100,
+};
+
+const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
+```
+
+### CRUD Operations
+
+```typescript
+// Insert data
+const userId = await orm.insertData('users', {
+  full_name: 'John Doe',
+  email_address: 'john@example.com',
+  is_active: 1,
+  created_at: new Date().toISOString(),
+});
+console.log(`Created user with ID: ${userId}`);
+
+// Update data
+const affectedRows = await orm.updateData({
+  table: 'users',
+  data: {
+    full_name: 'John Smith',
+    updated_at: new Date().toISOString(),
+  },
+  where: ['user_id = ?'],
+  values: [userId],
+});
+console.log(`Updated ${affectedRows} rows`);
+
+// Delete data
+const deletedRows = await orm.deleteData('users', {
+  user_id: userId,
+  is_active: 0,
+});
+console.log(`Deleted ${deletedRows} rows`);
+```
+
+### Raw SQL Queries
+
+```typescript
+// Execute raw SQL for complex operations
+interface CustomResult {
+  category: string;
+  total_sales: number;
+  avg_price: number;
+}
+
+const results = await orm.rawQuery<CustomResult>(
+  `
+  SELECT 
+    p.category,
+    SUM(oi.quantity * oi.price) as total_sales,
+    AVG(oi.price) as avg_price
+  FROM order_items oi
+  JOIN products p ON oi.product_id = p.product_id
+  WHERE oi.created_at >= ?
+  GROUP BY p.category
+  HAVING total_sales > ?
+  ORDER BY total_sales DESC
+  `,
+  ['2023-01-01', 10000]
+);
+
+results.forEach(result => {
+  console.log(`${result.category}: $${result.total_sales} (avg: $${result.avg_price})`);
+});
+```
+
+## 🔄 Transaction Management
+
+### Using withTransaction (Recommended)
+
+```typescript
+// Automatic transaction management
+const result = await orm.withTransaction(async (transaction) => {
+  // Insert order
+  const orderId = await orm.insertData('orders', {
+    user_id: 123,
+    total_amount: 299.99,
+    status: 'pending',
+  }, transaction);
+
+  // Insert order items
+  for (const item of items) {
+    await orm.insertData('order_items', {
+      order_id: orderId,
+      product_id: item.productId,
+      quantity: item.quantity,
+      price: item.price,
+    }, transaction);
+  }
+
+  // Update inventory
+  await orm.updateData({
+    table: 'products',
+    data: { stock_quantity: item.newStock },
+    where: ['product_id = ?'],
+    values: [item.productId],
+    transaction,
+  });
+
+  return orderId;
+});
+
+console.log(`Order created with ID: ${result}`);
+```
+
+### Manual Transaction Control
+
+```typescript
+const transaction = orm.createTransaction();
+
+try {
+  await transaction.begin();
+  
+  const userId = await orm.insertData('users', userData, transaction);
+  await orm.insertData('user_profiles', { user_id: userId, ...profileData }, transaction);
+  
+  await transaction.commit();
+  console.log('Transaction completed successfully');
+} catch (error) {
+  await transaction.rollback();
+  console.error('Transaction failed:', error);
+  throw error;
+}
+```
+
+## 🗃️ Schema Management
+
+### Creating Tables
+
+```typescript
+import { CreateTableConfig } from 'querycraft-mysql';
+
+const tableConfig: CreateTableConfig = {
+  table: 'users',
+  dropIfExists: true,
+  columns: [
+    {
+      name: 'user_id',
+      type: 'int',
+      options: {
+        autoIncrement: true,
+        unsigned: true,
+      },
+    },
+    {
+      name: 'email',
+      type: 'varchar',
+      options: {
+        length: 255,
+        nullable: false,
+      },
+    },
+    {
+      name: 'full_name',
+      type: 'varchar',
+      options: {
+        length: 200,
+        nullable: false,
+      },
+    },
+    {
+      name: 'status',
+      type: 'enum',
+      options: {
+        enum: ['active', 'inactive', 'pending'],
+        default: 'pending',
+      },
+    },
+    {
+      name: 'created_at',
+      type: 'timestamp',
+      options: {
+        default: 'CURRENT_TIMESTAMP',
+      },
+    },
+    {
+      name: 'updated_at',
+      type: 'timestamp',
+      options: {
+        default: 'CURRENT_TIMESTAMP',
+        onUpdate: 'CURRENT_TIMESTAMP',
+      },
+    },
+  ],
+  primaryKey: 'user_id',
+  indexes: [
+    {
+      type: 'UNIQUE',
+      columns: ['email'],
+    },
+    {
+      columns: ['status', 'created_at'],
+    },
+  ],
+  foreignKeys: [
+    {
+      column: 'department_id',
+      reference: 'departments(department_id)',
+      onDelete: 'SET NULL',
+      onUpdate: 'CASCADE',
+    },
+  ],
+  tableOptions: {
+    engine: 'InnoDB',
+    charset: 'utf8mb4',
+    collate: 'utf8mb4_unicode_ci',
+    comment: 'User accounts table',
+  },
+};
+
+await orm.createTable(tableConfig);
+```
+
+## 📊 Query Logging and Monitoring
+
+QueryCraft MySQL includes comprehensive query logging to help you monitor performance and debug issues:
+
+```typescript
+import { getQueryLogger, initialiseQueryLogger } from 'querycraft-mysql';
+
+// Initialize with custom configuration
+const logger = initialiseQueryLogger({
+  enabled: true,
+  logToFile: true,
+  logToConsole: true,
+  logFilePath: './logs/database.log',
+  slowQueryThreshold: 500, // Log queries taking > 500ms as warnings
+  maxFileSize: 50 * 1024 * 1024, // 50MB max file size
+  rotateOnSize: true,
+});
+
+// The logger automatically tracks:
+// - Query execution time
+// - Parameter values
+// - Slow query detection
+// - Error logging with stack traces
+// - Query success/failure rates
+```
+
+### Log Output Examples
+
+```
+[2023-12-07T10:30:45.123Z] [INFO] [245ms] SELECT `user_id` AS `id`, `full_name` AS `name` FROM `users` WHERE is_active = ? ORDER BY `user_id` ASC LIMIT 10 | Values: [1]
+
+[2023-12-07T10:30:46.456Z] [WARN] [1250ms] SELECT COUNT(`user_id`) AS count FROM `orders` WHERE created_at >= ? | Values: ["2023-01-01"]
+
+[2023-12-07T10:30:47.789Z] [ERROR] INSERT INTO `users` (`email`, `full_name`) VALUES (?, ?) | Values: ["test@example.com", "Test User"] | Error: Duplicate entry 'test@example.com' for key 'email'
+```
+
+## ⚙️ Configuration Options
+
+### MySQL ORM Configuration
+
+```typescript
+interface MySQLORMConfig {
+  host: string;
+  user: string;
+  password: string;
+  database: string;
+  port?: number;                    // Default: 3306
+  connectionLimit?: number;         // Default: 10
+  maxIdle?: number;                // Default: 10
+  idleTimeout?: number;            // Default: 60000ms
+  queueLimit?: number;             // Default: 0 (unlimited)
+  enableKeepAlive?: boolean;       // Default: true
+  keepAliveInitialDelay?: number;  // Default: 0
+}
+```
+
+### Query Logger Configuration
+
+```typescript
+interface QueryLoggerConfig {
+  enabled: boolean;                // Enable/disable logging
+  logToFile: boolean;             // Write to log file
+  logToConsole: boolean;          // Write to console
+  logFilePath: string;            // Path to log file
+  slowQueryThreshold: number;     // Slow query threshold (ms)
+  maxFileSize: number;            // Max log file size (bytes)
+  rotateOnSize: boolean;          // Enable log rotation
+}
+```
+
+## 🔒 Security Features
+
+### SQL Injection Prevention
+
+QueryCraft MySQL uses parameterized queries throughout:
+
+```typescript
+// ✅ Safe - uses parameterized queries
+const users = await orm.getData({
+  table: 'users',
+  idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name' },
+  where: ['email = ?', 'status = ?'],
+}, [userEmail, 'active']);
+
+// ✅ Safe - automatic escaping
+const userId = await orm.insertData('users', {
+  email: userInput.email,
+  name: userInput.name,
+});
+```
+
+### Input Validation
+
+```typescript
+// The ORM automatically validates and sanitizes:
+// - Numeric limits and offsets
+// - Table and column names (using escapeId)
+// - Parameter values (using parameterized queries)
+// - SQL injection attempts
+```
+
+## 🧪 Testing
+
+QueryCraft MySQL includes comprehensive test coverage:
+
+```bash
+# Run tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Generate coverage report
+npm run test:coverage
+```
+
+### Example Test
+
+```typescript
+import { MySQLORM } from 'querycraft-mysql';
+
+describe('MySQLORM', () => {
+  let orm: MySQLORM;
+
+  beforeEach(() => {
+    orm = new MySQLORM(testConfig);
+  });
+
+  it('should fetch user data', async () => {
+    const result = await orm.getData({
+      table: 'users',
+      idField: 'user_id',
+      fields: { id: 'user_id', name: 'full_name' },
+    });
+
+    expect(result.rows).toBeDefined();
+    expect(result.count).toBeGreaterThanOrEqual(0);
+  });
+});
+```
+
+## 📈 Performance Tips
+
+1. **Use Connection Pooling**: Configure appropriate connection limits
+2. **Index Your Queries**: Ensure your WHERE clauses use indexed columns
+3. **Monitor Slow Queries**: Use the built-in logging to identify bottlenecks
+4. **Batch Operations**: Use transactions for multiple related operations
+5. **Limit Result Sets**: Always use appropriate LIMIT clauses
+6. **Cache Frequently Used Data**: Consider caching for read-heavy operations
+
+## 🔧 Migration from Other ORMs
+
+### From Sequelize
+
+```typescript
+// Sequelize
+const users = await User.findAll({
+  where: { status: 'active' },
+  limit: 10,
+  order: [['created_at', 'DESC']],
+});
+
+// QueryCraft MySQL
+const { rows: users } = await orm.getData({
+  table: 'users',
+  idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name', status: 'status' },
+  where: ['status = ?'],
+  orderBy: 'created_at',
+  orderDirection: 'DESC',
+  limit: 10,
+}, ['active']);
+```
+
+### From TypeORM
+
+```typescript
+// TypeORM
+const users = await userRepository
+  .createQueryBuilder('user')
+  .where('user.status = :status', { status: 'active' })
+  .orderBy('user.created_at', 'DESC')
+  .take(10)
+  .getMany();
+
+// QueryCraft MySQL
+const { rows: users } = await orm.getData({
+  table: 'users',
+  idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name', status: 'status' },
+  where: ['status = ?'],
+  orderBy: 'created_at',
+  orderDirection: 'DESC',
+  limit: 10,
+}, ['active']);
+```
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- 📫 **Issues**: [GitHub Issues](https://github.com/mattthehat/querycraft-mysql/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/mattthehat/querycraft-mysql/discussions)
+- 📧 **Email**: matt@example.com
+
+## 🏆 Acknowledgments
+
+- Built on top of the excellent [mysql2](https://github.com/sidorares/node-mysql2) library
+- Inspired by modern ORM patterns and best practices
+- Thanks to all contributors and the open-source community
+
+---
+
+**Made with ❤️ by the QueryCraft team**
