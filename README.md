@@ -1,6 +1,6 @@
-# QueryCraft MySQL
+# Atlas MySQL
 
-[![npm version](https://badge.fury.io/js/querycraft-mysql.svg)](https://badge.fury.io/js/querycraft-mysql)
+[![npm version](https://badge.fury.io/js/atlas-mysql.svg)](https://badge.fury.io/js/atlas-mysql)
 [![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -13,7 +13,7 @@ A powerful, type-safe MySQL ORM with query building, transaction support, and co
 - **Transaction Support**: Built-in transaction management with automatic rollback
 - **Connection Pooling**: Efficient connection management using mysql2
 - **Query Logging**: Comprehensive query logging with performance monitoring
-- **SQL Injection Protection**: Parameterized queries prevent SQL injection attacks
+- **SQL Injection Protection**: Parameterised queries prevent SQL injection attacks
 - **Schema Management**: Create and manage database tables programmatically
 - **Environment Configuration**: Easy setup with environment variables
 - **Error Handling**: Detailed error reporting and graceful error handling
@@ -22,13 +22,13 @@ A powerful, type-safe MySQL ORM with query building, transaction support, and co
 ## 📦 Installation
 
 ```bash
-npm install querycraft-mysql mysql2
+npm install atlas-mysql mysql2
 ```
 
 Or with yarn:
 
 ```bash
-yarn add querycraft-mysql mysql2
+yarn add atlas-mysql mysql2
 ```
 
 ## 🏁 Quick Start
@@ -36,7 +36,7 @@ yarn add querycraft-mysql mysql2
 ### Basic Setup
 
 ```typescript
-import { MySQLORM, createMySQLORMFromEnv } from 'querycraft-mysql';
+import { MySQLORM, createMySQLORMFromEnv } from 'atlas-mysql';
 
 // Option 1: Create from environment variables
 // Set DB_USER, DB_PASS, DB_HOST, DB_NAME, DB_PORT in your .env file
@@ -77,7 +77,7 @@ NODE_ENV=development
 ### Basic Queries
 
 ```typescript
-import { MySQLORM, QueryConfig } from 'querycraft-mysql';
+import { MySQLORM, QueryConfig } from 'atlas-mysql';
 
 const orm = new MySQLORM(config);
 
@@ -274,7 +274,7 @@ try {
 ### Creating Tables
 
 ```typescript
-import { CreateTableConfig } from 'querycraft-mysql';
+import { CreateTableConfig } from 'atlas-mysql';
 
 const tableConfig: CreateTableConfig = {
   table: 'users',
@@ -359,12 +359,12 @@ await orm.createTable(tableConfig);
 
 ## 📊 Query Logging and Monitoring
 
-QueryCraft MySQL includes comprehensive query logging to help you monitor performance and debug issues:
+Atlas MySQL includes comprehensive query logging to help you monitor performance and debug issues:
 
 ```typescript
-import { getQueryLogger, initialiseQueryLogger } from 'querycraft-mysql';
+import { getQueryLogger, initialiseQueryLogger } from 'atlas-mysql';
 
-// Initialize with custom configuration
+// Initialise with custom configuration
 const logger = initialiseQueryLogger({
   enabled: true,
   logToFile: true,
@@ -431,10 +431,10 @@ interface QueryLoggerConfig {
 
 ### SQL Injection Prevention
 
-QueryCraft MySQL uses parameterized queries throughout:
+Atlas MySQL uses parameterised queries throughout:
 
 ```typescript
-// ✅ Safe - uses parameterized queries
+// ✅ Safe - uses parameterised queries
 const users = await orm.getData({
   table: 'users',
   idField: 'user_id',
@@ -455,13 +455,13 @@ const userId = await orm.insertData('users', {
 // The ORM automatically validates and sanitizes:
 // - Numeric limits and offsets
 // - Table and column names (using escapeId)
-// - Parameter values (using parameterized queries)
+// - Parameter values (using parameterised queries)
 // - SQL injection attempts
 ```
 
 ## 🧪 Testing
 
-QueryCraft MySQL includes comprehensive test coverage:
+Atlas MySQL includes comprehensive test coverage:
 
 ```bash
 # Run tests
@@ -477,7 +477,7 @@ npm run test:coverage
 ### Example Test
 
 ```typescript
-import { MySQLORM } from 'querycraft-mysql';
+import { MySQLORM } from 'atlas-mysql';
 
 describe('MySQLORM', () => {
   let orm: MySQLORM;
@@ -520,7 +520,7 @@ const users = await User.findAll({
   order: [['created_at', 'DESC']],
 });
 
-// QueryCraft MySQL
+// Atlas MySQL
 const { rows: users } = await orm.getData({
   table: 'users',
   idField: 'user_id',
@@ -543,7 +543,7 @@ const users = await userRepository
   .take(10)
   .getMany();
 
-// QueryCraft MySQL
+// Atlas MySQL
 const { rows: users } = await orm.getData({
   table: 'users',
   idField: 'user_id',
@@ -571,9 +571,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- 📫 **Issues**: [GitHub Issues](https://github.com/mattthehat/querycraft-mysql/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/mattthehat/querycraft-mysql/discussions)
-- 📧 **Email**: matt@example.com
+- 📫 **Issues**: [GitHub Issues](https://github.com/mattthehat/atlas-mysql/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/mattthehat/atlas-mysql/discussions)
 
 ## 🏆 Acknowledgments
 
@@ -583,4 +582,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Made with ❤️ by the QueryCraft team**
+**Made with ❤️ by the Atlas team**

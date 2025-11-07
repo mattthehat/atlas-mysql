@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial release of QueryCraft MySQL
+- Initial release of Atlas MySQL
 - Type-safe MySQL ORM with comprehensive TypeScript support
 - Flexible query builder with method chaining
 - Transaction management with automatic rollback
@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### v1.0.0 - Initial Release
 
-This is the first stable release of QueryCraft MySQL, a powerful and type-safe MySQL ORM for Node.js applications.
+This is the first stable release of Atlas MySQL, a powerful and type-safe MySQL ORM for Node.js applications.
 
 **Key Features:**
 - 🔒 **Security First**: Built-in SQL injection protection
@@ -87,12 +87,12 @@ This is the first stable release of QueryCraft MySQL, a powerful and type-safe M
 
 **Getting Started:**
 ```bash
-npm install querycraft-mysql mysql2
+npm install atlas-mysql mysql2
 ```
 
 **Basic Usage:**
 ```typescript
-import { MySQLORM } from 'querycraft-mysql';
+import { MySQLORM } from 'atlas-mysql';
 
 const orm = new MySQLORM({
   host: 'localhost',

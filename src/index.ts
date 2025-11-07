@@ -1,5 +1,5 @@
 /**
- * QueryCraft MySQL - A powerful, type-safe MySQL ORM for Node.js
+ * Atlas MySQL - A powerful, type-safe MySQL ORM for Node.js
  *
  * @packageDocumentation
  */

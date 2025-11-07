@@ -1,6 +1,6 @@
-# Contributing to QueryCraft MySQL
+# Contributing to Atlas MySQL
 
-Thank you for your interest in contributing to QueryCraft MySQL! We welcome contributions from the community and are pleased to have you join us.
+Thank you for your interest in contributing to Atlas MySQL! We welcome contributions from the community and are pleased to have you join us.
 
 ## 🚀 Getting Started
 
@@ -15,8 +15,8 @@ Thank you for your interest in contributing to QueryCraft MySQL! We welcome cont
 
 1. **Fork the repository**
    ```bash
-   git clone https://github.com/yourusername/querycraft-mysql.git
-   cd querycraft-mysql
+   git clone https://github.com/mattthehat/atlas-mysql.git
+   cd atlas-mysql
    ```
 
 2. **Install dependencies**
@@ -270,7 +270,7 @@ Examples of unacceptable behavior include:
 If you need help or have questions:
 
 1. Check the [documentation](README.md)
-2. Search [existing issues](https://github.com/yourusername/querycraft-mysql/issues)
+2. Search [existing issues](https://github.com/mattthehat/atlas-mysql/issues)
 3. Create a new issue with the "question" label
 4. Join our community discussions
 
@@ -280,4 +280,4 @@ All contributors will be recognized in our README.md file. We appreciate every c
 
 ---
 
-Thank you for contributing to QueryCraft MySQL! 🎉
+Thank you for contributing to Atlas MySQL! 🎉

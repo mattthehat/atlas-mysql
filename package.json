@@ -1,5 +1,5 @@
 {
-    "name": "querycraft-mysql",
+    "name": "atlas-mysql",
     "version": "1.0.0",
     "description": "A powerful, type-safe MySQL ORM with query building, transaction support, and comprehensive logging for Node.js applications",
     "main": "lib/index.js",
@@ -38,19 +38,16 @@
         "logging",
         "type-safe"
     ],
-    "author": {
-        "name": "Matthew Rosser",
-        "email": "matt@example.com"
-    },
+    "author": "Matthew Rosser",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/mattthehat/querycraft-mysql.git"
+        "url": "https://github.com/mattthehat/atlas-mysql.git"
     },
     "bugs": {
-        "url": "https://github.com/mattthehat/querycraft-mysql/issues"
+        "url": "https://github.com/mattthehat/atlas-mysql/issues"
     },
-    "homepage": "https://github.com/mattthehat/querycraft-mysql#readme",
+    "homepage": "https://github.com/mattthehat/atlas-mysql#readme",
     "engines": {
         "node": ">=16.0.0"
     },
