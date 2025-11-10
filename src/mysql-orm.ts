@@ -263,7 +263,7 @@ export class MySQLORM {
 
       for (const key in fields) {
         if (this.isObject(fields[key])) {
-          const subQuery = this.buildQuery(fields[key], false);
+          const subQuery = this.buildQuery(fields[key] as QueryConfig, false);
           query += `(${subQuery}) AS ${escapeId(key)}, `;
         } else {
           const fieldValue = fields[key];
