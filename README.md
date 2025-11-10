@@ -165,6 +165,101 @@ const salesQuery: QueryConfig = {
 const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
 ```
 
+### Subqueries
+
+Atlas MySQL supports subqueries in the SELECT clause, allowing you to nest queries for complex data retrieval:
+
+```typescript
+// Using subqueries to get aggregated data alongside main query results
+const userStatsQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'users.user_id',
+    name: 'users.full_name',
+    email: 'users.email_address',
+    // Subquery to count total orders per user
+    totalOrders: {
+      table: 'orders',
+      idField: 'order_id',
+      fields: {
+        count: 'COUNT(order_id)',
+      },
+      where: ['orders.user_id = users.user_id'],
+    },
+    // Subquery to calculate total spent
+    totalSpent: {
+      table: 'orders',
+      idField: 'order_id',
+      fields: {
+        sum: 'SUM(total_amount)',
+      },
+      where: ['orders.user_id = users.user_id', 'orders.status = ?'],
+    },
+  },
+  where: ['users.is_active = ?'],
+  orderBy: 'users.created_at',
+  orderDirection: 'DESC',
+  limit: 50,
+};
+
+const { rows: userStats } = await orm.getData(userStatsQuery, ['completed', 1]);
+// Results include main query data plus subquery results
+userStats.forEach(user => {
+  console.log(`${user.name}: ${user.totalOrders} orders, spent $${user.totalSpent}`);
+});
+```
+
+#### Subquery with Multiple Conditions
+
+```typescript
+// Complex example with multiple subqueries and conditions
+const productAnalysisQuery: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    productId: 'products.product_id',
+    productName: 'products.name',
+    category: 'products.category',
+    // Subquery for recent sales count (last 30 days)
+    recentSales: {
+      table: 'order_items',
+      idField: 'item_id',
+      fields: {
+        count: 'COUNT(item_id)',
+      },
+      where: [
+        'order_items.product_id = products.product_id',
+        'order_items.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)',
+      ],
+    },
+    // Subquery for average rating
+    avgRating: {
+      table: 'reviews',
+      idField: 'review_id',
+      fields: {
+        avg: 'AVG(rating)',
+      },
+      where: ['reviews.product_id = products.product_id'],
+    },
+  },
+  where: ['products.is_active = ?'],
+  orderBy: 'products.name',
+  limit: 100,
+};
+
+const { rows: products } = await orm.getData(productAnalysisQuery, [1]);
+```
+
+#### Subquery Best Practices
+
+When using subqueries:
+- Ensure subquery WHERE clauses reference the parent table correctly
+- Keep subqueries simple for better performance
+- Consider using JOINs with GROUP BY as an alternative for complex aggregations
+- Test query performance with EXPLAIN for large datasets
+- Use appropriate indexes on columns referenced in subquery WHERE clauses
+
 ### Type-Safe Queries with TypeScript
 
 Atlas MySQL provides full TypeScript support with proper type inference for your database operations:

@@ -25,7 +25,7 @@ export interface MySQLORMConfig {
 export type QueryConfig = {
   /** Field mappings from query alias to database column */
   fields: {
-    [key: string]: string | number | boolean | null;
+    [key: string]: string | number | boolean | null | QueryConfig;
   };
   /** Primary identifier field name */
   idField: string;
@@ -202,7 +202,7 @@ export class MySQLORM {
   private isDev: boolean;
 
   /**
-   * Initialize MySQL ORM with configuration
+   * Initialise MySQL ORM with configuration
    * @param config MySQL connection configuration
    */
   constructor(config: MySQLORMConfig) {
@@ -262,15 +262,20 @@ export class MySQLORM {
       query += `SELECT `;
 
       for (const key in fields) {
-        const fieldValue = fields[key];
-        // Check if the field value contains SQL functions or is already escaped
-        if (
-          typeof fieldValue === 'string' &&
-          (fieldValue.includes('(') || fieldValue.includes('`') || fieldValue.includes("'"))
-        ) {
-          query += `${fieldValue} AS ${escapeId(key)}, `;
+        if (this.isObject(fields[key])) {
+          const subQuery = this.buildQuery(fields[key], false);
+          query += `(${subQuery}) AS ${escapeId(key)}, `;
         } else {
-          query += `${escapeId(String(fieldValue))} AS ${escapeId(key)}, `;
+          const fieldValue = fields[key];
+          // Check if the field value contains SQL functions or is already escaped
+          if (
+            typeof fieldValue === 'string' &&
+            (fieldValue.includes('(') || fieldValue.includes('`') || fieldValue.includes("'"))
+          ) {
+            query += `${fieldValue} AS ${escapeId(key)}, `;
+          } else {
+            query += `${escapeId(String(fieldValue))} AS ${escapeId(key)}, `;
+          }
         }
       }
 
@@ -612,6 +617,56 @@ export class MySQLORM {
       console.error('Error in rawQuery:', error);
       throw new Error('Failed to execute raw query');
     }
+  }
+
+  /**
+   *
+   * @param config object
+   * @returns string
+   */
+  public getJsonSql(config: Record<string, any>): string {
+    let sql = 'JSON_OBJECT(';
+    const entries = Object.entries(config);
+    entries.forEach(([key, value], index) => {
+      sql += `${escape(key)}, `;
+      if (typeof value === 'object' && value !== null) {
+        sql += this.getJsonSql(value);
+      } else {
+        sql += `${escape(value)}`;
+      }
+      if (index < entries.length - 1) {
+        sql += ', ';
+      }
+    });
+    sql += ')';
+    return sql;
+  }
+
+  /**
+   *
+   * @param config Array<object>
+   * @returns string
+   */
+  public getJsonArraySql(config: Array<Record<string, any>>): string {
+    let sql = 'JSON_AGG(';
+    const values = Object.values(config);
+
+    values.forEach((value, index) => {
+      if (typeof value === 'object' && value !== null) {
+        sql += this.getJsonSql(value);
+      } else {
+        sql += `${escape(value)}`;
+      }
+      if (index < values.length - 1) {
+        sql += ', ';
+      }
+    });
+    sql += ')';
+    return sql;
+  }
+
+  public isObject(obj: any): obj is Record<string, any> {
+    return obj === Object(obj);
   }
 
   /**

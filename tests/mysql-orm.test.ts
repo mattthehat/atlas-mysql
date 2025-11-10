@@ -406,6 +406,237 @@ describe('MySQL ORM', () => {
     });
   });
 
+  describe('Subqueries', () => {
+    it('should build query with single subquery in SELECT', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([
+          [
+            {
+              id: 1,
+              name: 'Test User',
+              orderCount: 5,
+            },
+          ],
+          [],
+        ] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          name: 'full_name',
+          orderCount: {
+            table: 'orders',
+            idField: 'order_id',
+            fields: {
+              count: 'COUNT(order_id)',
+            },
+            where: ['orders.user_id = users.user_id'],
+          },
+        },
+      };
+
+      const result = await mysqlOrm.getData(config);
+
+      expect(pool.query).toHaveBeenCalled();
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('SELECT');
+      expect(query).toContain('COUNT');
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].orderCount).toBe(5);
+    });
+
+    it('should build query with multiple subqueries', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([
+          [
+            {
+              id: 1,
+              name: 'Product A',
+              salesCount: 10,
+              avgRating: 4.5,
+            },
+          ],
+          [],
+        ] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'products',
+        idField: 'product_id',
+        fields: {
+          id: 'product_id',
+          name: 'product_name',
+          salesCount: {
+            table: 'order_items',
+            idField: 'item_id',
+            fields: {
+              count: 'COUNT(item_id)',
+            },
+            where: ['order_items.product_id = products.product_id'],
+          },
+          avgRating: {
+            table: 'reviews',
+            idField: 'review_id',
+            fields: {
+              avg: 'AVG(rating)',
+            },
+            where: ['reviews.product_id = products.product_id'],
+          },
+        },
+      };
+
+      const result = await mysqlOrm.getData(config);
+
+      expect(pool.query).toHaveBeenCalled();
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].salesCount).toBe(10);
+      expect(result.rows[0].avgRating).toBe(4.5);
+    });
+
+    it('should handle subquery with multiple WHERE conditions', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([
+          [
+            {
+              id: 1,
+              name: 'User A',
+              recentOrders: 3,
+            },
+          ],
+          [],
+        ] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          name: 'full_name',
+          recentOrders: {
+            table: 'orders',
+            idField: 'order_id',
+            fields: {
+              count: 'COUNT(order_id)',
+            },
+            where: [
+              'orders.user_id = users.user_id',
+              'orders.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)',
+              'orders.status = ?',
+            ],
+          },
+        },
+      };
+
+      const result = await mysqlOrm.getData(config, ['completed']);
+
+      expect(pool.query).toHaveBeenCalled();
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('WHERE');
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].recentOrders).toBe(3);
+    });
+
+    it('should combine subqueries with regular fields', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([
+          [
+            {
+              userId: 1,
+              userName: 'John Doe',
+              userEmail: 'john@example.com',
+              totalSpent: 1250.5,
+            },
+          ],
+          [],
+        ] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          userId: 'user_id',
+          userName: 'full_name',
+          userEmail: 'email_address',
+          totalSpent: {
+            table: 'orders',
+            idField: 'order_id',
+            fields: {
+              sum: 'SUM(total_amount)',
+            },
+            where: ['orders.user_id = users.user_id'],
+          },
+        },
+        where: ['is_active = ?'],
+      };
+
+      const result = await mysqlOrm.getData(config, [1]);
+
+      expect(pool.query).toHaveBeenCalled();
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].userName).toBe('John Doe');
+      expect(result.rows[0].totalSpent).toBe(1250.5);
+    });
+
+    it('should use getFirst with subquery', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([
+        [
+          {
+            id: 1,
+            name: 'Top User',
+            orderTotal: 5000,
+          },
+        ],
+        [],
+      ] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          name: 'full_name',
+          orderTotal: {
+            table: 'orders',
+            idField: 'order_id',
+            fields: {
+              sum: 'SUM(total_amount)',
+            },
+            where: ['orders.user_id = users.user_id'],
+          },
+        },
+        orderBy: 'user_id',
+        orderDirection: 'DESC',
+      };
+
+      const result = await mysqlOrm.getFirst(config);
+
+      expect(pool.query).toHaveBeenCalled();
+      expect(result).toBeDefined();
+      expect(result?.name).toBe('Top User');
+      expect(result?.orderTotal).toBe(5000);
+    });
+  });
+
   describe('Error Handling', () => {
     it('should handle query errors gracefully', async () => {
       const mysql = await import('mysql2/promise');
