@@ -642,6 +642,7 @@ export class MySQLORM {
   /**
    *
    * @param config object
+   * @description Generates SQL for JSON object aggregation
    * @returns string
    */
   public getJsonSql(config: Record<string, string | number | null>): string {
@@ -649,7 +650,7 @@ export class MySQLORM {
     const entries = Object.entries(config);
     entries.forEach(([key, value], index) => {
       sql += `${escape(key)}, `;
-      if (typeof value === 'object' && value !== null) {
+      if (this.isObject(value)) {
         sql += this.getJsonSql(value);
       } else {
         sql += `${escape(value)}`;
@@ -665,6 +666,7 @@ export class MySQLORM {
   /**
    *
    * @param config Array<object>
+   * @description Generates SQL for JSON array aggregation
    * @returns string
    */
   public getJsonArraySql(config: Array<Record<string, string | number | null>>): string {
