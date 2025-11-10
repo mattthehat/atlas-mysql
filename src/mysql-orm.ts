@@ -39,6 +39,8 @@ export type QueryConfig = {
   }>;
   /** WHERE clause conditions */
   where?: Array<string>;
+  /** WHERE NOT clause conditions */
+  whereNot?: Array<string>;
   /** HAVING clause conditions */
   having?: {
     [key: string]: string | number | boolean | null;
@@ -295,6 +297,10 @@ export class MySQLORM {
 
     if (where && where.length > 0) {
       query += ` WHERE ${where.join(' AND ')}`;
+    }
+
+    if (config.whereNot && config.whereNot.length > 0) {
+      query += ` WHERE NOT ${config.whereNot.join(' AND ')}`;
     }
 
     if (having) {
