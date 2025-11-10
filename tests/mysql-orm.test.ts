@@ -194,7 +194,7 @@ describe('MySQL ORM', () => {
 
       await mysqlOrm.getData(config);
 
-      const query = vi.mocked(pool.query).mock.calls[0][0] as string;
+      const query = vi.mocked(pool.query).mock.calls[0][0] as unknown as string;
       expect(query).toContain('ORDER BY');
       expect(query).toContain('DESC');
       expect(query).toContain('LIMIT 20');
@@ -267,7 +267,7 @@ describe('MySQL ORM', () => {
 
       await mysqlOrm.getFirst(config);
 
-      const query = vi.mocked(pool.query).mock.calls[0][0] as string;
+      const query = vi.mocked(pool.query).mock.calls[0][0] as unknown as string;
       expect(query).toContain('LIMIT 1');
     });
   });
