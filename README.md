@@ -8,7 +8,6 @@ A powerful, type-safe MySQL ORM with query building, transaction support, and co
 
 ## 🚀 Features
 
-- **🏆 Performance Champion**: Proven faster than Drizzle ORM and Prisma in comprehensive benchmarks
 - **Type-Safe**: Full TypeScript support with generic types for queries, comprehensive type definitions, and IntelliSense support
 - **Query Builder**: Intuitive, flexible query building with method chaining
 - **Transaction Support**: Built-in transaction management with automatic rollback
@@ -852,10 +851,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- 📫 **Issues**: [GitHub Issues](https://github.com/mattthehat/atlas-mysql/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/mattthehat/atlas-mysql/discussions)
+- **Issues**: [GitHub Issues](https://github.com/mattthehat/atlas-mysql/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/mattthehat/atlas-mysql/discussions)
 
-## 🏆 Acknowledgments
+## Acknowledgments
 
 - Built on top of the excellent [mysql2](https://github.com/sidorares/node-mysql2) library
 - Inspired by modern ORM patterns and best practices
