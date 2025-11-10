@@ -4,23 +4,22 @@
 [![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A powerful, type-safe MySQL ORM with query building, transaction support, and comprehensive logging for Node.js applications. Built with TypeScript and designed for modern Node.js development.
+A type-safe MySQL ORM for Node.js applications. It provides query building, transaction support, and logging to help you work with MySQL databases using TypeScript.
 
-## 🚀 Features
+## Features
 
-- **Type-Safe**: Full TypeScript support with generic types for queries, comprehensive type definitions, and IntelliSense support
-- **Query Builder**: Intuitive, flexible query building with method chaining
-- **Transaction Support**: Built-in transaction management with automatic rollback
-- **Connection Pooling**: Efficient connection management using mysql2
-- **Query Logging**: Comprehensive query logging with performance monitoring
-- **SQL Injection Protection**: Parameterised queries prevent SQL injection attacks
-- **Schema Management**: Create and manage database tables programmatically
-- **Environment Configuration**: Easy setup with environment variables
-- **Error Handling**: Detailed error reporting and graceful error handling
-- **Performance Monitoring**: Track slow queries and database performance
+- Type-safe queries with TypeScript support
+- Flexible query builder with method chaining
+- Transaction management with automatic rollback
+- Connection pooling using mysql2
+- Query logging with performance tracking
+- Parameterized queries to help prevent SQL injection
+- Schema management for creating tables
+- Environment variable configuration
+- Detailed error reporting
 
 
-## 📦 Installation
+## Installation
 
 ```bash
 npm install atlas-mysql mysql2
@@ -32,7 +31,7 @@ Or with yarn:
 yarn add atlas-mysql mysql2
 ```
 
-## 🏁 Quick Start
+## Quick Start
 
 ### Basic Setup
 
@@ -67,7 +66,7 @@ const { rows: users } = await orm.getData<User>({
   limit: 10,
 });
 
-// TypeScript knows users is User[] with full IntelliSense support
+// TypeScript provides full IntelliSense support for the returned data
 users.forEach(user => console.log(`${user.name}: ${user.email}`));
 ```
 
@@ -90,7 +89,7 @@ SLOW_QUERY_THRESHOLD=1000
 NODE_ENV=development
 ```
 
-## 🔍 Usage Examples
+## Usage Examples
 
 ### Basic Queries
 
@@ -124,6 +123,24 @@ const user = await orm.getFirst(userQuery, [1, '2023-01-01']);
 if (user) {
   console.log(`User: ${user.name} (${user.email})`);
 }
+
+// Exclude records using WHERE NOT
+const activeUsersQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    email: 'email_address',
+  },
+  where: ['is_active = ?'],
+  whereNot: ['is_deleted = ?', 'is_banned = ?'],
+  orderBy: 'created_at',
+  orderDirection: 'DESC',
+};
+
+// Gets active users that are not deleted and not banned
+const { rows: activeUsers } = await orm.getData(activeUsersQuery, [1, 1, 1]);
 ```
 
 ### Advanced Query Building
@@ -262,7 +279,7 @@ When using subqueries:
 
 ### Type-Safe Queries with TypeScript
 
-Atlas MySQL provides full TypeScript support with proper type inference for your database operations:
+Atlas MySQL provides TypeScript support with type inference for your database operations:
 
 ```typescript
 import { MySQLORM, QueryConfig } from 'atlas-mysql';
@@ -731,9 +748,9 @@ const tableConfig: CreateTableConfig = {
 await orm.createTable(tableConfig);
 ```
 
-## 📊 Query Logging and Monitoring
+## Query Logging and Monitoring
 
-Atlas MySQL includes comprehensive query logging to help you monitor performance and debug issues:
+Atlas MySQL includes query logging to help you track performance and debug issues:
 
 ```typescript
 import { getQueryLogger, initialiseQueryLogger } from 'atlas-mysql';
@@ -767,7 +784,7 @@ const logger = initialiseQueryLogger({
 [2023-12-07T10:30:47.789Z] [ERROR] INSERT INTO `users` (`email`, `full_name`) VALUES (?, ?) | Values: ["test@example.com", "Test User"] | Error: Duplicate entry 'test@example.com' for key 'email'
 ```
 
-## ⚙️ Configuration Options
+## Configuration Options
 
 ### MySQL ORM Configuration
 
@@ -833,9 +850,9 @@ const userId = await orm.insertData('users', {
 // - SQL injection attempts
 ```
 
-## 🧪 Testing
+## Testing
 
-Atlas MySQL includes comprehensive test coverage:
+Atlas MySQL includes test coverage using Vitest:
 
 ```bash
 # Run tests
@@ -873,16 +890,18 @@ describe('MySQLORM', () => {
 });
 ```
 
-## 📈 Performance Tips
+## Performance Tips
 
-1. **Use Connection Pooling**: Configure appropriate connection limits
-2. **Index Your Queries**: Ensure your WHERE clauses use indexed columns
-3. **Monitor Slow Queries**: Use the built-in logging to identify bottlenecks
+Here are some things that can help improve performance:
+
+1. **Use Connection Pooling**: Set appropriate connection limits for your application
+2. **Index Your Queries**: Make sure your WHERE clauses use indexed columns
+3. **Monitor Slow Queries**: Use the built-in logging to find bottlenecks
 4. **Batch Operations**: Use transactions for multiple related operations
-5. **Limit Result Sets**: Always use appropriate LIMIT clauses
-6. **Cache Frequently Used Data**: Consider caching for read-heavy operations
+5. **Limit Result Sets**: Use LIMIT clauses to avoid fetching too much data
+6. **Cache When Appropriate**: Consider caching for frequently accessed data
 
-## 🔧 Migration from Other ORMs
+## Migration from Other ORMs
 
 ### From Sequelize
 
@@ -930,21 +949,21 @@ const { rows: users } = await orm.getData({
 ```
 
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions are welcome! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+2. Create your feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -m 'Add your feature'`)
+4. Push to the branch (`git push origin feature/your-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/mattthehat/atlas-mysql/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/mattthehat/atlas-mysql/discussions)

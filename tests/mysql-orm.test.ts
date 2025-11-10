@@ -141,6 +141,55 @@ describe('MySQL ORM', () => {
       ]);
     });
 
+    it('should handle WHERE NOT clauses', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[{ id: 2, name: 'Active User' }], []] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'userId',
+        fields: {
+          id: 'userId',
+          name: 'userName',
+        },
+        whereNot: ['userDeleted = ?', 'userBanned = ?'],
+      };
+
+      await mysqlOrm.getData(config, [1, 1]);
+
+      expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('WHERE NOT'), [1, 1]);
+    });
+
+    it('should handle combined WHERE and WHERE NOT clauses', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[{ id: 1, name: 'Test User' }], []] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'userId',
+        fields: {
+          id: 'userId',
+          name: 'userName',
+        },
+        where: ['userActive = ?'],
+        whereNot: ['userDeleted = ?'],
+      };
+
+      await mysqlOrm.getData(config, [1, 1]);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('WHERE');
+      expect(query).toContain('WHERE NOT');
+    });
+
     it('should handle JOINs', async () => {
       const mysql = await import('mysql2/promise');
       const pool = mysql.default.createPool({} as any);
@@ -634,6 +683,98 @@ describe('MySQL ORM', () => {
       expect(result).toBeDefined();
       expect(result?.name).toBe('Top User');
       expect(result?.orderTotal).toBe(5000);
+    });
+  });
+
+  describe('JSON SQL Generation', () => {
+    it('should generate JSON_OBJECT SQL with simple values', () => {
+      const config = {
+        name: 'John Doe',
+        age: 30,
+        city: 'New York',
+      };
+
+      const result = mysqlOrm.getJsonSql(config);
+
+      expect(result).toContain('JSON_OBJECT(');
+      expect(result).toContain("'name'");
+      expect(result).toContain("'John Doe'");
+      expect(result).toContain("'age'");
+      expect(result).toContain('30');
+      expect(result).toContain("'city'");
+      expect(result).toContain("'New York'");
+      expect(result).toContain(')');
+    });
+
+    it('should generate JSON_OBJECT SQL with null values', () => {
+      const config = {
+        name: 'Jane Doe',
+        middleName: null,
+        age: 25,
+      };
+
+      const result = mysqlOrm.getJsonSql(config);
+
+      expect(result).toContain('JSON_OBJECT(');
+      expect(result).toContain("'name'");
+      expect(result).toContain("'Jane Doe'");
+      expect(result).toContain("'middleName'");
+      expect(result).toContain("'null'");
+      expect(result).toContain(')');
+    });
+
+    it('should generate JSON_OBJECT SQL with nested objects', () => {
+      const config = {
+        user: 'John',
+        address: {
+          street: '123 Main St',
+          city: 'Boston',
+        },
+      } as any;
+
+      const result = mysqlOrm.getJsonSql(config);
+
+      expect(result).toContain('JSON_OBJECT(');
+      expect(result).toContain("'user'");
+      expect(result).toContain("'John'");
+      expect(result).toContain("'address'");
+      expect(result).toContain("'street'");
+      expect(result).toContain("'123 Main St'");
+      expect(result).toContain("'city'");
+      expect(result).toContain("'Boston'");
+    });
+
+    it('should generate JSON_AGG SQL with array of objects', () => {
+      const config = [
+        { id: 1, name: 'Product A' },
+        { id: 2, name: 'Product B' },
+      ];
+
+      const result = mysqlOrm.getJsonArraySql(config);
+
+      expect(result).toContain('JSON_AGG(');
+      expect(result).toContain('JSON_OBJECT(');
+      expect(result).toContain("'id'");
+      expect(result).toContain('1');
+      expect(result).toContain("'name'");
+      expect(result).toContain("'Product A'");
+      expect(result).toContain('2');
+      expect(result).toContain("'Product B'");
+      expect(result).toContain(')');
+    });
+
+    it('should generate JSON_AGG SQL with mixed value types', () => {
+      const config = [
+        { id: 1, name: 'Item 1', price: 100 },
+        { id: 2, name: 'Item 2', price: null },
+      ];
+
+      const result = mysqlOrm.getJsonArraySql(config);
+
+      expect(result).toContain('JSON_AGG(');
+      expect(result).toContain('100');
+      expect(result).toContain("'null'");
+      expect(result).toContain(')');
     });
   });
 

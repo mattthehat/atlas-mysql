@@ -42,6 +42,9 @@ export type QueryConfig = {
   /** WHERE NOT clause conditions */
   whereNot?: Array<string>;
   /** HAVING clause conditions */
+  whereIn?: {
+    [key: string]: Array<string | number | boolean | null>;
+  };
   having?: {
     [key: string]: string | number | boolean | null;
   };
@@ -244,6 +247,8 @@ export class MySQLORM {
       table,
       joins,
       where,
+      whereNot,
+      whereIn,
       having,
       limit,
       offset,
@@ -299,8 +304,17 @@ export class MySQLORM {
       query += ` WHERE ${where.join(' AND ')}`;
     }
 
-    if (config.whereNot && config.whereNot.length > 0) {
-      query += ` WHERE NOT ${config.whereNot.join(' AND ')}`;
+    if (whereNot && whereNot.length > 0) {
+      query += ` WHERE NOT ${whereNot.join(' AND ')}`;
+    }
+
+    if (whereIn) {
+      Object.keys(whereIn).forEach((key) => {
+        const values = whereIn[key];
+        if (values && values.length > 0) {
+          query += ` WHERE ${escapeId(key)} IN (${values.map(() => '?').join(', ')})`;
+        }
+      });
     }
 
     if (having) {
@@ -630,7 +644,7 @@ export class MySQLORM {
    * @param config object
    * @returns string
    */
-  public getJsonSql(config: Record<string, any>): string {
+  public getJsonSql(config: Record<string, string | number | null>): string {
     let sql = 'JSON_OBJECT(';
     const entries = Object.entries(config);
     entries.forEach(([key, value], index) => {
@@ -653,7 +667,7 @@ export class MySQLORM {
    * @param config Array<object>
    * @returns string
    */
-  public getJsonArraySql(config: Array<Record<string, any>>): string {
+  public getJsonArraySql(config: Array<Record<string, string | number | null>>): string {
     let sql = 'JSON_AGG(';
     const values = Object.values(config);
 
@@ -671,6 +685,11 @@ export class MySQLORM {
     return sql;
   }
 
+  /**
+   *
+   * @param obj any
+   * @returns bool
+   */
   public isObject(obj: any): obj is Record<string, any> {
     return obj === Object(obj);
   }
