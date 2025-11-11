@@ -182,6 +182,109 @@ const salesQuery: QueryConfig = {
 const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
 ```
 
+### JSON SQL Functions
+
+Atlas MySQL provides helper functions to generate JSON SQL for complex data aggregation:
+
+#### JSON_OBJECT Generation
+
+Use `getJsonSql()` to create JSON objects from your data:
+
+```typescript
+// Basic JSON object generation
+const jsonConfig = {
+  userId: 123,
+  userName: 'John Doe',
+  userEmail: 'john@example.com',
+};
+
+const jsonSql = orm.getJsonSql(jsonConfig);
+// Generates: JSON_OBJECT('userId', 123, 'userName', 'John Doe', 'userEmail', 'john@example.com')
+
+// Use in a query
+const query = `SELECT id, name, ${jsonSql} AS user_data FROM users`;
+const results = await orm.rawQuery(query);
+```
+
+#### Nested JSON Objects
+
+```typescript
+// Create nested JSON structures
+const nestedConfig = {
+  id: 1,
+  name: 'Product A',
+  details: {
+    category: 'Electronics',
+    price: 299.99,
+    inStock: true,
+  },
+} as any;
+
+const nestedJsonSql = orm.getJsonSql(nestedConfig);
+// Generates nested JSON_OBJECT calls
+```
+
+#### JSON Array Aggregation
+
+Use `getJsonArraySql()` to aggregate multiple records into a JSON array:
+
+```typescript
+// Generate JSON array from data
+const productsArray = [
+  { id: 1, name: 'Product A', price: 100 },
+  { id: 2, name: 'Product B', price: 200 },
+  { id: 3, name: 'Product C', price: 300 },
+];
+
+const jsonArraySql = orm.getJsonArraySql(productsArray);
+// Generates: JSON_AGG(JSON_OBJECT('id', 1, 'name', 'Product A', 'price', 100), ...)
+
+// Example: Aggregate order items
+const orderQuery = `
+  SELECT 
+    o.order_id,
+    o.customer_name,
+    ${orm.getJsonArraySql([
+      { itemId: 'oi.item_id', itemName: 'oi.item_name', quantity: 'oi.quantity' },
+    ])} AS items
+  FROM orders o
+  LEFT JOIN order_items oi ON o.order_id = oi.order_id
+  GROUP BY o.order_id
+`;
+
+const ordersWithItems = await orm.rawQuery(orderQuery);
+```
+
+#### Practical JSON Example
+
+```typescript
+// Combine user data with aggregated order information
+const userOrderSummary = `
+  SELECT 
+    u.user_id,
+    ${orm.getJsonSql({
+      name: 'u.full_name',
+      email: 'u.email',
+      joinedDate: 'u.created_at',
+    })} AS user_info,
+    ${orm.getJsonArraySql([
+      {
+        orderId: 'o.order_id',
+        orderDate: 'o.created_at',
+        total: 'o.total_amount',
+      },
+    ])} AS recent_orders
+  FROM users u
+  LEFT JOIN orders o ON u.user_id = o.user_id
+  WHERE u.is_active = 1
+  GROUP BY u.user_id
+  LIMIT 10
+`;
+
+const results = await orm.rawQuery(userOrderSummary);
+// Returns users with nested JSON containing user info and array of orders
+```
+
 ### Subqueries
 
 Atlas MySQL supports subqueries in the SELECT clause, allowing you to nest queries for complex data retrieval:
@@ -748,6 +851,11 @@ const tableConfig: CreateTableConfig = {
 await orm.createTable(tableConfig);
 ```
 
+## Schema Management
+
+Atlas MySQL provides comprehensive table creation and management:
+```
+
 ## Query Logging and Monitoring
 
 Atlas MySQL includes query logging to help you track performance and debug issues:
@@ -976,4 +1084,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Made with ❤️ by the Atlas team**
+Made by the Atlas team

@@ -690,6 +690,7 @@ export class MySQLORM {
   /**
    *
    * @param obj any
+   * @description Type guard to check if value is an object
    * @returns bool
    */
   public isObject(obj: any): obj is Record<string, any> {
