@@ -184,105 +184,138 @@ const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
 
 ### JSON SQL Functions
 
-Atlas MySQL provides helper functions to generate JSON SQL for complex data aggregation:
+Atlas MySQL provides helper functions to generate JSON SQL for complex data aggregation. These functions can be used in your field definitions to create structured JSON data:
 
 #### JSON_OBJECT Generation
 
 Use `getJsonSql()` to create JSON objects from your data:
 
 ```typescript
-// Basic JSON object generation
-const jsonConfig = {
-  userId: 123,
-  userName: 'John Doe',
-  userEmail: 'john@example.com',
+// Using JSON_OBJECT in query fields
+const userQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    // Generate JSON object with user details
+    profile: orm.getJsonSql({
+      email: 'email_address',
+      phone: 'phone_number',
+      city: 'city',
+    }),
+  },
+  where: ['is_active = ?'],
 };
 
-const jsonSql = orm.getJsonSql(jsonConfig);
-// Generates: JSON_OBJECT('userId', 123, 'userName', 'John Doe', 'userEmail', 'john@example.com')
-
-// Use in a query
-const query = `SELECT id, name, ${jsonSql} AS user_data FROM users`;
-const results = await orm.rawQuery(query);
+const { rows: users } = await orm.getData(userQuery, [1]);
+// Each user will have a 'profile' field containing a JSON object
+// { id: 1, name: 'John Doe', profile: { email: '...', phone: '...', city: '...' } }
 ```
 
 #### Nested JSON Objects
 
 ```typescript
-// Create nested JSON structures
-const nestedConfig = {
-  id: 1,
-  name: 'Product A',
-  details: {
-    category: 'Electronics',
-    price: 299.99,
-    inStock: true,
+// Create nested JSON structures for complex data
+const productQuery: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    id: 'product_id',
+    name: 'product_name',
+    details: orm.getJsonSql({
+      category: 'category_name',
+      specifications: orm.getJsonSql({
+        weight: 'weight_kg',
+        dimensions: 'dimensions_cm',
+        color: 'color',
+      } as any),
+    } as any),
   },
-} as any;
+  limit: 20,
+};
 
-const nestedJsonSql = orm.getJsonSql(nestedConfig);
-// Generates nested JSON_OBJECT calls
+const { rows: products } = await orm.getData(productQuery);
+// Returns products with nested JSON: { id: 1, name: 'Product A', details: { category: '...', specifications: {...} } }
 ```
 
-#### JSON Array Aggregation
+#### JSON Array Aggregation with Subqueries
 
-Use `getJsonArraySql()` to aggregate multiple records into a JSON array:
-
-```typescript
-// Generate JSON array from data
-const productsArray = [
-  { id: 1, name: 'Product A', price: 100 },
-  { id: 2, name: 'Product B', price: 200 },
-  { id: 3, name: 'Product C', price: 300 },
-];
-
-const jsonArraySql = orm.getJsonArraySql(productsArray);
-// Generates: JSON_AGG(JSON_OBJECT('id', 1, 'name', 'Product A', 'price', 100), ...)
-
-// Example: Aggregate order items
-const orderQuery = `
-  SELECT 
-    o.order_id,
-    o.customer_name,
-    ${orm.getJsonArraySql([
-      { itemId: 'oi.item_id', itemName: 'oi.item_name', quantity: 'oi.quantity' },
-    ])} AS items
-  FROM orders o
-  LEFT JOIN order_items oi ON o.order_id = oi.order_id
-  GROUP BY o.order_id
-`;
-
-const ordersWithItems = await orm.rawQuery(orderQuery);
-```
-
-#### Practical JSON Example
+Combine JSON arrays with subqueries for complex aggregations:
 
 ```typescript
-// Combine user data with aggregated order information
-const userOrderSummary = `
-  SELECT 
-    u.user_id,
-    ${orm.getJsonSql({
-      name: 'u.full_name',
-      email: 'u.email',
-      joinedDate: 'u.created_at',
-    })} AS user_info,
-    ${orm.getJsonArraySql([
-      {
-        orderId: 'o.order_id',
-        orderDate: 'o.created_at',
-        total: 'o.total_amount',
+// Get users with their orders as a JSON array
+const userOrdersQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    userId: 'user_id',
+    userName: 'full_name',
+    userEmail: 'email_address',
+    // Subquery that returns aggregated order data
+    orders: {
+      table: 'orders',
+      idField: 'order_id',
+      fields: {
+        orderData: orm.getJsonArraySql([
+          {
+            orderId: 'order_id',
+            orderDate: 'created_at',
+            total: 'total_amount',
+            status: 'order_status',
+          },
+        ]),
       },
-    ])} AS recent_orders
-  FROM users u
-  LEFT JOIN orders o ON u.user_id = o.user_id
-  WHERE u.is_active = 1
-  GROUP BY u.user_id
-  LIMIT 10
-`;
+      where: ['orders.user_id = users.user_id'],
+    },
+  },
+  where: ['users.is_active = ?'],
+  limit: 10,
+};
 
-const results = await orm.rawQuery(userOrderSummary);
-// Returns users with nested JSON containing user info and array of orders
+const { rows: usersWithOrders } = await orm.getData(userOrdersQuery, [1]);
+// Returns users with their orders as a JSON array in the 'orders' field
+```
+
+#### Practical Example: Customer Dashboard
+
+```typescript
+// Create a comprehensive customer view with JSON aggregation
+const customerDashboard: QueryConfig = {
+  table: 'customers',
+  idField: 'customer_id',
+  fields: {
+    customerId: 'customer_id',
+    customerName: 'full_name',
+    // Customer contact info as JSON
+    contactInfo: orm.getJsonSql({
+      email: 'email',
+      phone: 'phone',
+      address: 'street_address',
+      city: 'city',
+      country: 'country',
+    }),
+    // Purchase summary subquery
+    purchaseSummary: {
+      table: 'orders',
+      idField: 'order_id',
+      fields: {
+        summary: orm.getJsonSql({
+          totalOrders: 'COUNT(order_id)',
+          totalSpent: 'SUM(total_amount)',
+          avgOrderValue: 'AVG(total_amount)',
+        }),
+      },
+      where: ['orders.customer_id = customers.customer_id', 'orders.status = ?'],
+    },
+  },
+  where: ['customers.created_at >= ?'],
+  orderBy: 'customer_id',
+  limit: 50,
+};
+
+const { rows: dashboardData } = await orm.getData(customerDashboard, ['completed', '2024-01-01']);
+// Returns structured customer data with nested JSON objects containing contact info and purchase summary
 ```
 
 ### Subqueries
