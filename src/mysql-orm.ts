@@ -40,8 +40,6 @@ export type QueryConfig = {
   /** WHERE clause conditions */
   where?: Array<string>;
   /** WHERE NOT clause conditions */
-  whereNot?: Array<string>;
-  /** HAVING clause conditions */
   whereIn?: {
     [key: string]: Array<string | number | boolean | null>;
   };
@@ -200,6 +198,13 @@ type UpdateDataConfig = {
 };
 
 /**
+ * Configuration for JSON object serialization
+ */
+export interface JsonObject {
+  [key: string]: string | number | null | JsonObject;
+}
+
+/**
  * MySQL ORM class providing database operations and query building
  */
 export class MySQLORM {
@@ -247,7 +252,6 @@ export class MySQLORM {
       table,
       joins,
       where,
-      whereNot,
       whereIn,
       having,
       limit,
@@ -302,10 +306,6 @@ export class MySQLORM {
 
     if (where && where.length > 0) {
       query += ` WHERE ${where.join(' AND ')}`;
-    }
-
-    if (whereNot && whereNot.length > 0) {
-      query += ` WHERE NOT ${whereNot.join(' AND ')}`;
     }
 
     if (whereIn) {
@@ -645,7 +645,7 @@ export class MySQLORM {
    * @description Generates SQL for JSON object aggregation
    * @returns string
    */
-  public getJsonSql(config: Record<string, string | number | null>): string {
+  public getJsonSql(config: JsonObject): string {
     let sql = 'JSON_OBJECT(';
     const entries = Object.entries(config);
     entries.forEach(([key, value], index) => {
@@ -669,7 +669,7 @@ export class MySQLORM {
    * @description Generates SQL for JSON array aggregation
    * @returns string
    */
-  public getJsonArraySql(config: Array<Record<string, string | number | null>>): string {
+  public getJsonArraySql(config: Array<JsonObject>): string {
     let sql = 'JSON_AGG(';
     const values = Object.values(config);
 

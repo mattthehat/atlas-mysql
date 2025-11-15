@@ -141,7 +141,7 @@ describe('MySQL ORM', () => {
       ]);
     });
 
-    it('should handle WHERE NOT clauses', async () => {
+    it('should handle WHERE clauses with != conditions', async () => {
       const mysql = await import('mysql2/promise');
       const pool = mysql.default.createPool({} as any);
 
@@ -156,15 +156,15 @@ describe('MySQL ORM', () => {
           id: 'userId',
           name: 'userName',
         },
-        whereNot: ['userDeleted = ?', 'userBanned = ?'],
+        where: ['userDeleted != ?', 'userBanned != ?'],
       };
 
       await mysqlOrm.getData(config, [1, 1]);
 
-      expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('WHERE NOT'), [1, 1]);
+      expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('WHERE'), [1, 1]);
     });
 
-    it('should handle combined WHERE and WHERE NOT clauses', async () => {
+    it('should handle combined WHERE clauses with != and = conditions', async () => {
       const mysql = await import('mysql2/promise');
       const pool = mysql.default.createPool({} as any);
 
@@ -179,15 +179,14 @@ describe('MySQL ORM', () => {
           id: 'userId',
           name: 'userName',
         },
-        where: ['userActive = ?'],
-        whereNot: ['userDeleted = ?'],
+        where: ['userActive = ?', 'userDeleted != ?'],
       };
 
       await mysqlOrm.getData(config, [1, 1]);
 
       const [query] = vi.mocked(pool.query).mock.calls[0];
       expect(query).toContain('WHERE');
-      expect(query).toContain('WHERE NOT');
+      expect(query).toContain('!=');
     });
 
     it('should handle JOINs', async () => {

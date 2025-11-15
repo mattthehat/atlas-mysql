@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2025-11-15
+
+### Removed
+- **BREAKING CHANGE**: Removed `whereNot` functionality from QueryConfig interface
+  - The `whereNot` feature was deemed redundant and potentially confusing
+  - Users should now use standard SQL operators like `!=`, `NOT IN`, `IS NOT NULL` in regular `where` clauses
+
+### Added  
+- Enhanced documentation with comprehensive WHERE clause examples
+- New examples showing all SQL comparison operators (`>=`, `<=`, `!=`, `>`, `=`, `BETWEEN`, `LIKE`)
+- Examples for NULL checks (`IS NOT NULL`, `IS NULL`)
+- Examples for IN and NOT IN operators
+- More practical filtering examples in documentation
+
+### Changed
+- Updated test suite to demonstrate proper use of `!=` and other comparison operators
+- Improved documentation structure for better readability
+
+### Migration Guide
+If you were using `whereNot`, replace it with equivalent `where` conditions:
+
+```typescript
+// Before (removed):
+whereNot: ['is_deleted = ?', 'is_banned = ?']
+
+// After (recommended):
+where: ['is_deleted != ?', 'is_banned != ?']
+```
+
+## [1.2.1] - Previous Release
+
 ### Added
 - Initial release of Atlas MySQL
 - Type-safe MySQL ORM with comprehensive TypeScript support

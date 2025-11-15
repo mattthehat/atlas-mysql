@@ -124,7 +124,7 @@ if (user) {
   console.log(`User: ${user.name} (${user.email})`);
 }
 
-// Exclude records using WHERE NOT
+// Exclude records using != operator
 const activeUsersQuery: QueryConfig = {
   table: 'users',
   idField: 'user_id',
@@ -133,8 +133,7 @@ const activeUsersQuery: QueryConfig = {
     name: 'full_name',
     email: 'email_address',
   },
-  where: ['is_active = ?'],
-  whereNot: ['is_deleted = ?', 'is_banned = ?'],
+  where: ['is_active = ?', 'is_deleted != ?', 'is_banned != ?'],
   orderBy: 'created_at',
   orderDirection: 'DESC',
 };
@@ -180,6 +179,86 @@ const salesQuery: QueryConfig = {
 };
 
 const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
+```
+
+### WHERE Clause Operators and Filtering
+
+Atlas MySQL supports all standard SQL comparison operators in WHERE clauses:
+
+```typescript
+// Using different comparison operators
+const filterQuery: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    id: 'product_id',
+    name: 'product_name',
+    price: 'price',
+    category: 'category',
+    stock: 'stock_quantity',
+  },
+  where: [
+    'price >= ?',           // Greater than or equal
+    'price <= ?',           // Less than or equal
+    'category != ?',        // Not equal
+    'stock > ?',            // Greater than
+    'is_active = ?',        // Equal
+    'created_at BETWEEN ? AND ?',  // Between dates
+    'product_name LIKE ?',  // Pattern matching
+  ],
+  orderBy: 'price',
+  orderDirection: 'ASC',
+};
+
+const filteredProducts = await orm.getData(filterQuery, [
+  10.00,              // price >= 10.00
+  100.00,             // price <= 100.00
+  'discontinued',     // category != 'discontinued'
+  0,                  // stock > 0
+  1,                  // is_active = 1
+  '2023-01-01',       // created_at BETWEEN '2023-01-01'
+  '2023-12-31',       // AND '2023-12-31'
+  '%electronics%',    // product_name LIKE '%electronics%'
+]);
+
+// Example with NULL checks
+const nullCheckQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    email: 'email_address',
+    phone: 'phone_number',
+  },
+  where: [
+    'phone_number IS NOT NULL',     // Has phone number
+    'deleted_at IS NULL',           // Not soft deleted
+    'email_verified_at IS NOT NULL', // Email verified
+  ],
+};
+
+const verifiedUsers = await orm.getData(nullCheckQuery);
+
+// Example with IN operator for multiple values
+const multiValueQuery: QueryConfig = {
+  table: 'orders',
+  idField: 'order_id',
+  fields: {
+    id: 'order_id',
+    status: 'order_status',
+    total: 'total_amount',
+  },
+  where: [
+    'order_status IN (?, ?, ?)',    // Multiple status values
+    'user_id NOT IN (?, ?)',        // Exclude specific users
+  ],
+};
+
+const orders = await orm.getData(multiValueQuery, [
+  'pending', 'processing', 'shipped',  // IN values
+  123, 456,                            // NOT IN values
+]);
 ```
 
 ### JSON SQL Functions
@@ -229,8 +308,8 @@ const productQuery: QueryConfig = {
         weight: 'weight_kg',
         dimensions: 'dimensions_cm',
         color: 'color',
-      } as any),
-    } as any),
+      } as JsonObject),
+    } as JsonObject),
   },
   limit: 20,
 };
