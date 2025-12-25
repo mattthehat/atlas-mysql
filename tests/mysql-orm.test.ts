@@ -686,48 +686,48 @@ describe('MySQL ORM', () => {
   });
 
   describe('JSON SQL Generation', () => {
-    it('should generate JSON_OBJECT SQL with simple values', () => {
+    it('should generate JSON_OBJECT SQL with column references', () => {
       const config = {
-        name: 'John Doe',
-        age: 30,
-        city: 'New York',
+        name: 'full_name',
+        age: 'user_age',
+        city: 'user_city',
       };
 
       const result = mysqlOrm.getJsonSql(config);
 
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'name'");
-      expect(result).toContain("'John Doe'");
+      expect(result).toContain("`full_name`"); // Column reference, not literal
       expect(result).toContain("'age'");
-      expect(result).toContain('30');
+      expect(result).toContain('`user_age`'); // Column reference
       expect(result).toContain("'city'");
-      expect(result).toContain("'New York'");
+      expect(result).toContain("`user_city`"); // Column reference
       expect(result).toContain(')');
     });
 
-    it('should generate JSON_OBJECT SQL with null values', () => {
+    it('should generate JSON_OBJECT SQL with null column references', () => {
       const config = {
-        name: 'Jane Doe',
+        name: 'full_name',
         middleName: null,
-        age: 25,
+        age: 'user_age',
       };
 
       const result = mysqlOrm.getJsonSql(config);
 
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'name'");
-      expect(result).toContain("'Jane Doe'");
+      expect(result).toContain("`full_name`");
       expect(result).toContain("'middleName'");
-      expect(result).toContain("'null'");
+      expect(result).toContain("`null`"); // Null is converted to string "null" then escaped
       expect(result).toContain(')');
     });
 
     it('should generate JSON_OBJECT SQL with nested objects', () => {
       const config = {
-        user: 'John',
+        user: 'user_name',
         address: {
-          street: '123 Main St',
-          city: 'Boston',
+          street: 'street_address',
+          city: 'city_name',
         },
       } as any;
 
@@ -735,44 +735,44 @@ describe('MySQL ORM', () => {
 
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'user'");
-      expect(result).toContain("'John'");
+      expect(result).toContain("`user_name`");
       expect(result).toContain("'address'");
       expect(result).toContain("'street'");
-      expect(result).toContain("'123 Main St'");
+      expect(result).toContain("`street_address`");
       expect(result).toContain("'city'");
-      expect(result).toContain("'Boston'");
+      expect(result).toContain("`city_name`");
     });
 
-    it('should generate JSON_AGG SQL with array of objects', () => {
+    it('should generate JSON_ARRAYAGG SQL with array of objects', () => {
       const config = [
-        { id: 1, name: 'Product A' },
-        { id: 2, name: 'Product B' },
+        { id: 'order_id', name: 'product_name' },
+        { id: 'item_id', name: 'item_name' },
       ];
 
       const result = mysqlOrm.getJsonArraySql(config);
 
-      expect(result).toContain('JSON_AGG(');
+      expect(result).toContain('JSON_ARRAYAGG('); // Fixed: now uses MySQL's JSON_ARRAYAGG
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'id'");
-      expect(result).toContain('1');
+      expect(result).toContain('`order_id`');
       expect(result).toContain("'name'");
-      expect(result).toContain("'Product A'");
-      expect(result).toContain('2');
-      expect(result).toContain("'Product B'");
+      expect(result).toContain("`product_name`");
+      expect(result).toContain('`item_id`');
+      expect(result).toContain("`item_name`");
       expect(result).toContain(')');
     });
 
-    it('should generate JSON_AGG SQL with mixed value types', () => {
+    it('should generate JSON_ARRAYAGG SQL with mixed value types', () => {
       const config = [
-        { id: 1, name: 'Item 1', price: 100 },
-        { id: 2, name: 'Item 2', price: null },
+        { id: 'item_id', name: 'item_name', price: 'item_price' },
+        { id: 'product_id', name: 'product_name', price: null },
       ];
 
       const result = mysqlOrm.getJsonArraySql(config);
 
-      expect(result).toContain('JSON_AGG(');
-      expect(result).toContain('100');
-      expect(result).toContain("'null'");
+      expect(result).toContain('JSON_ARRAYAGG('); // Fixed: now uses MySQL's JSON_ARRAYAGG
+      expect(result).toContain('`item_price`');
+      expect(result).toContain("`null`");
       expect(result).toContain(')');
     });
   });

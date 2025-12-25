@@ -142,6 +142,17 @@ const activeUsersQuery: QueryConfig = {
 const { rows: activeUsers } = await orm.getData(activeUsersQuery, [1, 1, 1]);
 ```
 
+> **⚠️ Important Note on LIMIT:**
+> Queries **do not** have a default LIMIT. If you don't specify a `limit` in your query configuration, all matching rows will be returned. Always add an explicit `limit` when querying large tables to avoid performance issues and memory problems.
+>
+> ```typescript
+> // Good - explicit limit
+> const query = { table: 'users', idField: 'id', fields: { id: 'id' }, limit: 100 };
+>
+> // Risky - no limit, could return millions of rows
+> const query = { table: 'users', idField: 'id', fields: { id: 'id' } };
+> ```
+
 ### Advanced Query Building
 
 ```typescript

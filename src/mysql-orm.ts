@@ -244,9 +244,12 @@ export class MySQLORM {
    * Build SQL query from QueryConfig
    * @param config Query configuration
    * @param isCount Whether to build a count query
-   * @returns Generated SQL query string
+   * @returns Generated SQL query string and parameter values for whereIn/having
    */
-  private buildQuery(config: QueryConfig, isCount = false): string {
+  private buildQuery(
+    config: QueryConfig,
+    isCount = false
+  ): { query: string; additionalValues: Array<string | number | boolean | null> } {
     const {
       fields,
       table,
@@ -264,6 +267,7 @@ export class MySQLORM {
     } = config;
 
     let query = '';
+    const additionalValues: Array<string | number | boolean | null> = [];
 
     if (isCount) {
       query += `SELECT COUNT(${escapeId(idField)}) AS count FROM ${
@@ -274,8 +278,9 @@ export class MySQLORM {
 
       for (const key in fields) {
         if (this.isObject(fields[key])) {
-          const subQuery = this.buildQuery(fields[key] as QueryConfig, false);
-          query += `(${subQuery}) AS ${escapeId(key)}, `;
+          const subQueryResult = this.buildQuery(fields[key] as QueryConfig, false);
+          query += `(${subQueryResult.query}) AS ${escapeId(key)}, `;
+          // Note: subquery values are handled within the subquery itself
         } else {
           const fieldValue = fields[key];
           // Check if the field value contains SQL functions or is already escaped
@@ -304,29 +309,38 @@ export class MySQLORM {
       });
     }
 
+    // Build WHERE clause with proper handling of where and whereIn
+    const whereClauses: string[] = [];
+
     if (where && where.length > 0) {
-      query += ` WHERE ${where.join(' AND ')}`;
+      whereClauses.push(...where);
     }
 
     if (whereIn) {
       Object.keys(whereIn).forEach((key) => {
         const values = whereIn[key];
         if (values && values.length > 0) {
-          query += ` WHERE ${escapeId(key)} IN (${values.map(() => '?').join(', ')})`;
+          whereClauses.push(`${escapeId(key)} IN (${values.map(() => '?').join(', ')})`);
+          additionalValues.push(...values);
         }
       });
     }
 
-    if (having) {
-      query += ` HAVING ${Object.keys(having)
-        .map((key) => `${escapeId(key)} = ?`)
-        .join(' AND ')}`;
+    if (whereClauses.length > 0) {
+      query += ` WHERE ${whereClauses.join(' AND ')}`;
     }
 
     if (groupBy) {
       query += ` GROUP BY ${
         Array.isArray(groupBy) ? groupBy.map((g) => escapeId(g)).join(', ') : escapeId(groupBy)
       }`;
+    }
+
+    if (having) {
+      query += ` HAVING ${Object.keys(having)
+        .map((key) => `${escapeId(key)} = ?`)
+        .join(' AND ')}`;
+      additionalValues.push(...Object.values(having));
     }
 
     if (orderBy) {
@@ -346,9 +360,8 @@ export class MySQLORM {
       if (limit) {
         const safeLimit = Math.max(1, Math.floor(Math.abs(limit)));
         query += ` LIMIT ${safeLimit}`;
-      } else {
-        query += ' LIMIT 10';
       }
+      // No default LIMIT - users must explicitly specify if they want one
     }
 
     if (offset && !isCount) {
@@ -358,7 +371,9 @@ export class MySQLORM {
 
     if (union && union.length > 0) {
       union.forEach((u) => {
-        query += ` UNION ${this.buildQuery(u)}`;
+        const unionResult = this.buildQuery(u);
+        query += ` UNION ${unionResult.query}`;
+        additionalValues.push(...unionResult.additionalValues);
       });
     }
 
@@ -366,7 +381,7 @@ export class MySQLORM {
       console.log(chalk.blue('Generated Query:'), chalk.magentaBright(query));
     }
 
-    return query;
+    return { query, additionalValues };
   }
 
   /**
@@ -383,23 +398,27 @@ export class MySQLORM {
     const startTime = Date.now();
 
     try {
-      const queryStr = this.buildQuery(query);
-      const countQueryStr = this.buildQuery(query, true);
+      const queryResult = this.buildQuery(query);
+      const countQueryResult = this.buildQuery(query, true);
+
+      // Combine user-provided values with additional values from whereIn/having
+      const allValues = [...values, ...queryResult.additionalValues];
+      const allCountValues = [...values, ...countQueryResult.additionalValues];
 
       if (this.isDev) {
-        console.log(chalk.cyan('Values:'), values);
+        console.log(chalk.cyan('Values:'), allValues);
       }
 
       const [rowsResult, countRowsResult] = await Promise.all([
-        this.pool.query(queryStr, values),
-        this.pool.query(countQueryStr, values),
+        this.pool.query(queryResult.query, allValues),
+        this.pool.query(countQueryResult.query, allCountValues),
       ]);
 
       const [rows] = rowsResult;
       const [countRows] = countRowsResult;
 
       const duration = Date.now() - startTime;
-      queryLogger.logQuery(queryStr, values, duration);
+      queryLogger.logQuery(queryResult.query, allValues, duration);
 
       const countResult = (countRows as Array<{ count: number }>)[0];
       return {
@@ -407,9 +426,10 @@ export class MySQLORM {
         count: countResult?.count || 0,
       };
     } catch (error) {
-      const queryStr = this.buildQuery(query);
+      const queryResult = this.buildQuery(query);
+      const allValues = [...values, ...queryResult.additionalValues];
       if (error instanceof Error) {
-        queryLogger.logError(queryStr, error, values);
+        queryLogger.logError(queryResult.query, error, allValues);
       }
 
       console.error('Error in getData:', error);
@@ -435,22 +455,25 @@ export class MySQLORM {
     const startTime = Date.now();
 
     query.limit = 1;
-    const queryStr = this.buildQuery(query);
+    const queryResult = this.buildQuery(query);
+
+    // Combine user-provided values with additional values from whereIn/having
+    const allValues = [...values, ...queryResult.additionalValues];
 
     if (this.isDev) {
-      console.log(chalk.cyan('Values:'), values);
+      console.log(chalk.cyan('Values:'), allValues);
     }
 
     try {
-      const [rows] = await this.pool.query(queryStr, values);
+      const [rows] = await this.pool.query(queryResult.query, allValues);
 
       const duration = Date.now() - startTime;
-      queryLogger.logQuery(queryStr, values, duration);
+      queryLogger.logQuery(queryResult.query, allValues, duration);
 
       return (rows as T[])[0] || null;
     } catch (error) {
       if (error instanceof Error) {
-        queryLogger.logError(queryStr, error, values);
+        queryLogger.logError(queryResult.query, error, allValues);
       }
 
       console.error('Error in getFirst:', error);
@@ -513,15 +536,17 @@ export class MySQLORM {
   /**
    * Update existing records in database
    * @param config Update configuration
+   * @param transaction Optional transaction instance
    * @returns Promise resolving to number of affected rows
    */
   public async updateData(
-    config: UpdateDataConfig & { transaction?: Transaction }
+    config: UpdateDataConfig,
+    transaction?: Transaction
   ): Promise<number> {
     const queryLogger = getQueryLogger();
     const startTime = Date.now();
 
-    const { table, data, where, values, transaction } = config;
+    const { table, data, where, values } = config;
 
     const setKeys = Object.keys(data);
     const setValues = Object.values(data);
@@ -642,18 +667,22 @@ export class MySQLORM {
   /**
    *
    * @param config object
-   * @description Generates SQL for JSON object aggregation
+   * @description Generates SQL for JSON object aggregation using MySQL's JSON_OBJECT function
+   * Keys are string literals, values are column references or nested JSON_OBJECT calls
    * @returns string
    */
   public getJsonSql(config: JsonObject): string {
     let sql = 'JSON_OBJECT(';
     const entries = Object.entries(config);
     entries.forEach(([key, value], index) => {
-      sql += `${escape(key)}, `;
+      // Keys in JSON_OBJECT are string literals
+      sql += `'${key}', `;
       if (this.isObject(value)) {
+        // Nested JSON object
         sql += this.getJsonSql(value);
       } else {
-        sql += `${escape(value)}`;
+        // Value is a column reference - use escapeId for column names
+        sql += `${escapeId(String(value))}`;
       }
       if (index < entries.length - 1) {
         sql += ', ';
@@ -666,18 +695,20 @@ export class MySQLORM {
   /**
    *
    * @param config Array<object>
-   * @description Generates SQL for JSON array aggregation
+   * @description Generates SQL for JSON array aggregation using MySQL's JSON_ARRAYAGG function
+   * Note: MySQL uses JSON_ARRAYAGG, not JSON_AGG (which is PostgreSQL syntax)
    * @returns string
    */
   public getJsonArraySql(config: Array<JsonObject>): string {
-    let sql = 'JSON_AGG(';
+    let sql = 'JSON_ARRAYAGG(';
     const values = Object.values(config);
 
     values.forEach((value, index) => {
-      if (typeof value === 'object' && value !== null) {
+      if (this.isObject(value)) {
         sql += this.getJsonSql(value);
       } else {
-        sql += `${escape(value)}`;
+        // Value is a column reference
+        sql += `${escapeId(String(value))}`;
       }
       if (index < values.length - 1) {
         sql += ', ';
@@ -690,11 +721,11 @@ export class MySQLORM {
   /**
    *
    * @param obj any
-   * @description Type guard to check if value is an object
+   * @description Type guard to check if value is a plain object (not array, null, or other types)
    * @returns bool
    */
   public isObject(obj: any): obj is Record<string, any> {
-    return obj === Object(obj);
+    return typeof obj === 'object' && obj !== null && !Array.isArray(obj);
   }
 
   /**
