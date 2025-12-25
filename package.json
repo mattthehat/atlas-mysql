@@ -15,15 +15,16 @@
         "test": "vitest",
         "test:watch": "vitest --watch",
         "test:coverage": "vitest --coverage",
+        "test:ci": "vitest run",
         "lint": "eslint src/**/*.ts",
         "lint:fix": "eslint src/**/*.ts --fix",
         "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
         "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
         "clean": "rimraf lib",
-        "prepublishOnly": "npm run clean && npm run build && npm test",
+        "prepublishOnly": "npm run clean && npm run build",
         "dev": "ts-node src/mysql-orm.ts",
         "docs:generate": "typedoc --out docs src/mysql-orm.ts",
-        "release": "npm run prepublishOnly && npm publish"
+        "release": "npm run test:ci && npm run prepublishOnly && npm publish"
     },
     "keywords": [
         "mysql",
