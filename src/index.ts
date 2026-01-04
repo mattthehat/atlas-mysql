@@ -12,6 +12,9 @@ export {
   type MySQLORMConfig,
   type QueryConfig,
   type CreateTableConfig,
+  type FieldValue,
+  type OrderByConfig,
+  type JsonObject,
 } from './mysql-orm';
 
 // Export query logger functionality

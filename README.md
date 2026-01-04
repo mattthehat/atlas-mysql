@@ -10,10 +10,18 @@ A type-safe MySQL ORM for Node.js applications. It provides query building, tran
 
 - Type-safe queries with TypeScript support
 - Flexible query builder with method chaining
+- **NEW in v1.5.0**: Automatic field alias resolution in WHERE, ORDER BY, whereIn, and whereNotIn
+- **NEW in v1.5.0**: DISTINCT support for unique value queries
+- **NEW in v1.5.0**: whereNotIn for excluding multiple values
+- **NEW in v1.5.0**: Enhanced HAVING clause with all comparison operators
+- **NEW in v1.5.0**: Explicit raw SQL markers for calculated fields
+- **NEW in v1.5.0**: Batch insert for high-performance multi-row inserts
+- **NEW in v1.5.0**: Multiple ORDER BY with different directions per column
+- **NEW in v1.5.0**: Enhanced security with JOIN ON clause validation
 - Transaction management with automatic rollback
 - Connection pooling using mysql2
 - Query logging with performance tracking
-- Parameterized queries to help prevent SQL injection
+- Parameterised queries to help prevent SQL injection
 - Schema management for creating tables
 - Environment variable configuration
 - Detailed error reporting
@@ -271,6 +279,420 @@ const orders = await orm.getData(multiValueQuery, [
   123, 456,                            // NOT IN values
 ]);
 ```
+
+### Field Alias Support
+
+**New in v1.5.0**: Atlas MySQL now automatically resolves field aliases in WHERE clauses, ORDER BY, whereIn, and whereNotIn without any configuration needed.
+
+```typescript
+// Define friendly aliases that map to actual database columns
+const userQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',        // 'name' is an alias for 'full_name'
+    email: 'email_address',   // 'email' is an alias for 'email_address'
+    status: 'user_status',    // 'status' is an alias for 'user_status'
+  },
+  // Use the friendly alias names in WHERE clauses
+  where: ['name LIKE ?', 'status = ?', 'email != ?'],
+  // Use aliases in ORDER BY
+  orderBy: 'name',
+  orderDirection: 'ASC',
+};
+
+// Aliases are automatically resolved to actual column names in the generated SQL
+const { rows } = await orm.getData(userQuery, ['%John%', 'active', 'banned@example.com']);
+```
+
+#### Alias Support in WHERE Clauses
+
+```typescript
+const productQuery: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    id: 'product_id',
+    name: 'product_name',
+    price: 'product_price',
+    stock: 'stock_count',
+  },
+  // All operators work with aliases
+  where: [
+    'price > ?',          // Uses product_price
+    'price <= ?',         // Uses product_price
+    'stock >= ?',         // Uses stock_count
+    'name LIKE ?',        // Uses product_name
+  ],
+};
+
+await orm.getData(productQuery, [10.00, 99.99, 5, '%Phone%']);
+```
+
+#### Alias Support in whereIn and whereNotIn
+
+```typescript
+const orderQuery: QueryConfig = {
+  table: 'orders',
+  idField: 'order_id',
+  fields: {
+    id: 'order_id',
+    status: 'order_status',
+    userId: 'user_id',
+  },
+  // Use aliases in whereIn
+  whereIn: {
+    status: ['pending', 'processing', 'shipped'],  // Uses order_status
+  },
+  // Use aliases in whereNotIn
+  whereNotIn: {
+    userId: [123, 456, 789],  // Uses user_id - excludes specific users
+  },
+};
+
+await orm.getData(orderQuery);
+```
+
+#### Alias Support in ORDER BY
+
+```typescript
+// Simple ORDER BY with alias
+const query1: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    created: 'created_at',
+  },
+  orderBy: 'name',  // Resolves to full_name
+  orderDirection: 'ASC',
+};
+
+// Multiple columns with different directions
+const query2: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    id: 'product_id',
+    price: 'product_price',
+    name: 'product_name',
+  },
+  orderBy: [
+    { column: 'price', direction: 'DESC' },  // Resolves to product_price DESC
+    { column: 'name', direction: 'ASC' },    // Resolves to product_name ASC
+  ],
+};
+```
+
+### DISTINCT Support
+
+**New in v1.5.0**: Query distinct values using the `distinct` option:
+
+```typescript
+// Get distinct cities from users table
+const citiesQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    city: 'user_city',
+  },
+  distinct: true,
+};
+
+const { rows, count } = await orm.getData(citiesQuery);
+// Returns unique city values and accurate count of distinct rows
+```
+
+#### Using DISTINCT with WHERE and ORDER BY
+
+```typescript
+// Find distinct product categories with conditions
+const categoryQuery: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    category: 'category_name',
+    brand: 'brand_name',
+  },
+  distinct: true,
+  where: ['is_active = ?', 'price > ?'],
+  orderBy: 'category',
+  orderDirection: 'ASC',
+};
+
+const { rows } = await orm.getData(categoryQuery, [1, 0]);
+```
+
+### whereNotIn Support
+
+**New in v1.5.0**: Exclude multiple values with `whereNotIn`:
+
+```typescript
+// Exclude specific users
+const query: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    status: 'user_status',
+  },
+  whereNotIn: {
+    status: ['deleted', 'banned', 'suspended'],  // Exclude these statuses
+    userId: [1, 2, 3],                           // Exclude specific user IDs
+  },
+};
+
+const { rows } = await orm.getData(query);
+```
+
+#### Combining whereIn and whereNotIn
+
+```typescript
+const orderQuery: QueryConfig = {
+  table: 'orders',
+  idField: 'order_id',
+  fields: {
+    id: 'order_id',
+    status: 'order_status',
+    userId: 'user_id',
+  },
+  // Include only specific statuses
+  whereIn: {
+    status: ['pending', 'processing', 'shipped'],
+  },
+  // But exclude specific users
+  whereNotIn: {
+    userId: [123, 456],
+  },
+};
+```
+
+### Enhanced HAVING Clause
+
+**New in v1.5.0**: The HAVING clause now supports all comparison operators, not just equality:
+
+```typescript
+// Complex HAVING with multiple conditions
+const salesQuery: QueryConfig = {
+  table: 'orders',
+  idField: 'order_id',
+  fields: {
+    userId: 'user_id',
+    totalOrders: 'COUNT(order_id)',
+    totalSpent: 'SUM(total_amount)',
+    avgOrder: 'AVG(total_amount)',
+  },
+  groupBy: 'user_id',
+  having: [
+    'COUNT(order_id) >= 5',        // At least 5 orders
+    'SUM(total_amount) > 1000',    // Total spent over $1000
+    'AVG(total_amount) >= 50',     // Average order at least $50
+  ],
+  orderBy: 'totalSpent',
+  orderDirection: 'DESC',
+};
+
+const { rows } = await orm.getData(salesQuery);
+```
+
+### Explicit Raw SQL in Fields
+
+**New in v1.5.0**: Use raw SQL expressions explicitly with the `{ raw: 'SQL' }` marker:
+
+```typescript
+// Calculate age from birth date
+const userQuery: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    // Explicit raw SQL for calculated field
+    age: { raw: 'TIMESTAMPDIFF(YEAR, birth_date, CURDATE())' },
+    // Format dates
+    joinDate: { raw: "DATE_FORMAT(created_at, '%Y-%m-%d')" },
+    // Concatenate fields
+    fullAddress: { raw: "CONCAT(street, ', ', city, ', ', country)" },
+  },
+  where: ['is_active = ?'],
+};
+
+const { rows } = await orm.getData(userQuery, [1]);
+// Returns: { id: 1, name: 'John Doe', age: 35, joinDate: '2020-01-15', fullAddress: '123 Main St, New York, USA' }
+```
+
+#### Advanced Raw SQL Examples
+
+```typescript
+// Complex calculations
+const reportQuery: QueryConfig = {
+  table: 'sales',
+  idField: 'sale_id',
+  fields: {
+    id: 'sale_id',
+    // Calculate discount percentage
+    discountPercent: { raw: 'ROUND((original_price - sale_price) / original_price * 100, 2)' },
+    // Format currency
+    priceFormatted: { raw: "CONCAT('$', FORMAT(sale_price, 2))" },
+    // Case expressions
+    priceCategory: {
+      raw: "CASE WHEN sale_price < 50 THEN 'Budget' WHEN sale_price < 200 THEN 'Mid-Range' ELSE 'Premium' END"
+    },
+  },
+  where: ['sale_date >= ?'],
+};
+```
+
+### Batch Insert
+
+**New in v1.5.0**: Insert multiple records in a single query for better performance:
+
+```typescript
+// Insert multiple users at once
+const newUsers = [
+  { full_name: 'Alice Johnson', email_address: 'alice@example.com', is_active: 1 },
+  { full_name: 'Bob Smith', email_address: 'bob@example.com', is_active: 1 },
+  { full_name: 'Carol White', email_address: 'carol@example.com', is_active: 1 },
+];
+
+// Returns array of insert IDs
+const insertIds = await orm.batchInsertData('users', newUsers);
+console.log(`Created users with IDs: ${insertIds.join(', ')}`);
+// Output: Created users with IDs: 101, 102, 103
+```
+
+#### Batch Insert with Transaction
+
+```typescript
+// Batch insert within a transaction for atomicity
+await orm.withTransaction(async (transaction) => {
+  const orderItems = [
+    { order_id: 500, product_id: 10, quantity: 2, price: 29.99 },
+    { order_id: 500, product_id: 15, quantity: 1, price: 49.99 },
+    { order_id: 500, product_id: 20, quantity: 3, price: 15.99 },
+  ];
+
+  const itemIds = await orm.batchInsertData('order_items', orderItems, transaction);
+
+  // Update order total
+  const total = orderItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+  await orm.updateData({
+    table: 'orders',
+    data: { total_amount: total },
+    where: ['order_id = ?'],
+    values: [500],
+    transaction,
+  });
+
+  return itemIds;
+});
+```
+
+#### Performance Benefits
+
+```typescript
+// ❌ Slow: Individual inserts (N queries)
+for (const user of users) {
+  await orm.insertData('users', user);
+}
+
+// ✅ Fast: Batch insert (1 query)
+await orm.batchInsertData('users', users);
+// 10-100x faster for large datasets!
+```
+
+### Multiple ORDER BY Directions
+
+**New in v1.5.0**: Order by multiple columns with different sort directions:
+
+```typescript
+// Array of columns with shared direction
+const query1: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    id: 'product_id',
+    name: 'product_name',
+    category: 'category_name',
+  },
+  orderBy: ['category', 'name'],
+  orderDirection: 'ASC',  // Both columns sorted ascending
+};
+
+// Object notation for different directions per column
+const query2: QueryConfig = {
+  table: 'products',
+  idField: 'product_id',
+  fields: {
+    id: 'product_id',
+    price: 'product_price',
+    name: 'product_name',
+    stock: 'stock_count',
+  },
+  orderBy: [
+    { column: 'price', direction: 'DESC' },  // Highest price first
+    { column: 'stock', direction: 'ASC' },   // Then lowest stock
+    { column: 'name' },                      // Defaults to ASC
+  ],
+};
+
+// String notation with inline direction
+const query3: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    created: 'created_at',
+  },
+  orderBy: ['name ASC', 'created DESC'],
+};
+```
+
+### Enhanced Security
+
+**New in v1.5.0**: JOIN ON clause validation to prevent SQL injection:
+
+```typescript
+// ✅ Safe: Valid JOIN conditions
+const query: QueryConfig = {
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: 'user_id',
+    name: 'full_name',
+    role: 'roles.role_name',
+  },
+  joins: [
+    {
+      type: 'INNER',
+      table: 'roles',
+      on: 'users.role_id = roles.role_id',  // Valid column comparison
+    },
+  ],
+};
+
+// ❌ Blocked: Dangerous patterns automatically rejected
+const badQuery: QueryConfig = {
+  joins: [
+    {
+      type: 'INNER',
+      table: 'roles',
+      on: 'users.role_id = roles.role_id; DROP TABLE users;',  // Throws error!
+    },
+  ],
+};
+// Error: Invalid JOIN ON clause: potentially dangerous pattern detected
+```
+
+The ORM automatically validates JOIN ON clauses and rejects:
+- SQL injection attempts (`;`, `--`, `/* */`)
+- Dangerous keywords (UNION, DROP, DELETE, INSERT, UPDATE, EXEC)
+- Suspicious patterns that could compromise security
 
 ### JSON SQL Functions
 
@@ -827,7 +1249,7 @@ results.forEach(result => {
 });
 ```
 
-## 🔄 Transaction Management
+## Transaction Management
 
 ### Using withTransaction (Recommended)
 
@@ -886,7 +1308,7 @@ try {
 }
 ```
 
-## 🗃️ Schema Management
+## Schema Management
 
 ### Creating Tables
 
@@ -1049,7 +1471,7 @@ interface QueryLoggerConfig {
 }
 ```
 
-## 🔒 Security Features
+## Security Features
 
 ### SQL Injection Prevention
 

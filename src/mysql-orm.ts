@@ -20,12 +20,25 @@ export interface MySQLORMConfig {
 }
 
 /**
+ * Field value type - either a column name (string), raw SQL, or a subquery
+ */
+export type FieldValue = string | { raw: string } | QueryConfig;
+
+/**
+ * Order by configuration - either a column name or an object with column and direction
+ */
+export type OrderByConfig =
+  | string
+  | Array<string>
+  | Array<{ column: string; direction?: 'ASC' | 'DESC' }>;
+
+/**
  * Query configuration interface for building dynamic SQL queries
  */
 export type QueryConfig = {
   /** Field mappings from query alias to database column */
   fields: {
-    [key: string]: string | number | boolean | null | QueryConfig;
+    [key: string]: FieldValue;
   };
   /** Primary identifier field name */
   idField: string;
@@ -39,25 +52,30 @@ export type QueryConfig = {
   }>;
   /** WHERE clause conditions */
   where?: Array<string>;
-  /** WHERE NOT clause conditions */
+  /** WHERE IN clause conditions */
   whereIn?: {
     [key: string]: Array<string | number | boolean | null>;
   };
-  having?: {
-    [key: string]: string | number | boolean | null;
+  /** WHERE NOT IN clause conditions */
+  whereNotIn?: {
+    [key: string]: Array<string | number | boolean | null>;
   };
+  /** HAVING clause conditions (supports operators like >, <, >=, <=, =) */
+  having?: Array<string>;
   /** Maximum number of records to return */
   limit?: number;
   /** Number of records to skip */
   offset?: number;
-  /** ORDER BY field(s) */
-  orderBy?: Array<string> | string;
-  /** Sort direction */
+  /** ORDER BY field(s) - supports aliases */
+  orderBy?: OrderByConfig;
+  /** Sort direction (only used when orderBy is string or string[]) */
   orderDirection?: 'ASC' | 'DESC';
   /** GROUP BY field(s) */
   groupBy?: Array<string> | string;
   /** UNION queries */
   union?: Array<QueryConfig>;
+  /** Use DISTINCT in SELECT */
+  distinct?: boolean;
 };
 
 /**
@@ -241,6 +259,89 @@ export class MySQLORM {
   }
 
   /**
+   * Resolve alias to actual column name
+   * @param fieldOrAlias Field name or alias from fields map
+   * @param config Query configuration
+   * @returns Actual column name
+   */
+  private resolveColumnName(fieldOrAlias: string, config: QueryConfig): string {
+    // First check if it's an alias in fields map
+    const fieldValue = config.fields[fieldOrAlias];
+    if (fieldValue && typeof fieldValue === 'string') {
+      return fieldValue;
+    }
+
+    // Otherwise assume it's already a column name
+    return fieldOrAlias;
+  }
+
+  /**
+   * Resolve aliases in WHERE clause
+   * @param clause WHERE clause string
+   * @param config Query configuration
+   * @returns Resolved WHERE clause with actual column names
+   */
+  private resolveWhereClause(clause: string, config: QueryConfig): string {
+    // Match field names before operators
+    // Supports: =, !=, <, >, <=, >=, <=>, LIKE, NOT LIKE, IN, NOT IN, IS NULL, IS NOT NULL, BETWEEN
+    const fieldPattern =
+      /^(\w+(?:\.\w+)?)\s*(=|!=|<>|<|>|<=|>=|<=>|LIKE|NOT LIKE|IN|NOT IN|IS NULL|IS NOT NULL|BETWEEN)/i;
+    const match = clause.match(fieldPattern);
+
+    if (match && match[1]) {
+      const fieldName = match[1];
+      const resolvedField = this.resolveColumnName(fieldName, config);
+      return clause.replace(fieldName, resolvedField);
+    }
+
+    return clause;
+  }
+
+  /**
+   * Resolve aliases in ORDER BY column
+   * @param column ORDER BY column string
+   * @param config Query configuration
+   * @returns Resolved column name
+   */
+  private resolveOrderByColumn(column: string, config: QueryConfig): string {
+    // Remove ASC/DESC if included
+    const cleanColumn = column.replace(/\s+(ASC|DESC)$/i, '').trim();
+    const direction = column.match(/\s+(ASC|DESC)$/i)?.[1] || '';
+
+    const resolvedColumn = this.resolveColumnName(cleanColumn, config);
+    return direction ? `${resolvedColumn} ${direction}` : resolvedColumn;
+  }
+
+  /**
+   * Validate JOIN ON clause to prevent SQL injection
+   * @param onClause The ON clause to validate
+   * @throws Error if ON clause appears to contain user input or dangerous patterns
+   */
+  private validateJoinOnClause(onClause: string): void {
+    // Check for potential SQL injection patterns
+    const dangerousPatterns = [
+      /;/g, // Multiple statements
+      /--/g, // SQL comments
+      /\/\*/g, // Block comments
+      /\bUNION\b/i,
+      /\bDROP\b/i,
+      /\bDELETE\b/i,
+      /\bINSERT\b/i,
+      /\bUPDATE\b/i,
+      /\bEXEC\b/i,
+      /\bEXECUTE\b/i,
+    ];
+
+    for (const pattern of dangerousPatterns) {
+      if (pattern.test(onClause)) {
+        throw new Error(
+          `Invalid JOIN ON clause: potentially dangerous pattern detected. ON clauses must only contain column comparisons.`
+        );
+      }
+    }
+  }
+
+  /**
    * Build SQL query from QueryConfig
    * @param config Query configuration
    * @param isCount Whether to build a count query
@@ -256,6 +357,7 @@ export class MySQLORM {
       joins,
       where,
       whereIn,
+      whereNotIn,
       having,
       limit,
       offset,
@@ -264,34 +366,45 @@ export class MySQLORM {
       idField,
       orderDirection,
       union,
+      distinct,
     } = config;
 
     let query = '';
     const additionalValues: Array<string | number | boolean | null> = [];
 
     if (isCount) {
-      query += `SELECT COUNT(${escapeId(idField)}) AS count FROM ${
+      const distinctKeyword = distinct ? 'DISTINCT ' : '';
+      query += `SELECT COUNT(${distinctKeyword}${escapeId(idField)}) AS count FROM ${
         Array.isArray(table) ? table.map((t) => escapeId(t)).join(', ') : escapeId(table)
       }`;
     } else {
-      query += `SELECT `;
+      query += distinct ? 'SELECT DISTINCT ' : 'SELECT ';
 
       for (const key in fields) {
-        if (this.isObject(fields[key])) {
-          const subQueryResult = this.buildQuery(fields[key] as QueryConfig, false);
+        const fieldValue = fields[key];
+
+        if (this.isObject(fieldValue) && !('raw' in fieldValue)) {
+          // Handle subquery
+          const subQueryResult = this.buildQuery(fieldValue as QueryConfig, false);
           query += `(${subQueryResult.query}) AS ${escapeId(key)}, `;
           // Note: subquery values are handled within the subquery itself
-        } else {
-          const fieldValue = fields[key];
+        } else if (
+          typeof fieldValue === 'object' &&
+          fieldValue !== null &&
+          'raw' in fieldValue &&
+          typeof fieldValue.raw === 'string'
+        ) {
+          // Handle explicit raw SQL marker
+          query += `${fieldValue.raw} AS ${escapeId(key)}, `;
+        } else if (typeof fieldValue === 'string') {
           // Check if the field value contains SQL functions or is already escaped
-          if (
-            typeof fieldValue === 'string' &&
-            (fieldValue.includes('(') || fieldValue.includes('`') || fieldValue.includes("'"))
-          ) {
+          if (fieldValue.includes('(') || fieldValue.includes('`') || fieldValue.includes("'")) {
             query += `${fieldValue} AS ${escapeId(key)}, `;
           } else {
-            query += `${escapeId(String(fieldValue))} AS ${escapeId(key)}, `;
+            query += `${escapeId(fieldValue)} AS ${escapeId(key)}, `;
           }
+        } else {
+          query += `${escapeId(String(fieldValue))} AS ${escapeId(key)}, `;
         }
       }
 
@@ -305,22 +418,42 @@ export class MySQLORM {
 
     if (joins) {
       joins.forEach((join) => {
+        // Validate JOIN ON clause for security
+        this.validateJoinOnClause(join.on);
         query += ` ${join.type.toUpperCase()} JOIN ${escapeId(join.table)} ON ${join.on}`;
       });
     }
 
-    // Build WHERE clause with proper handling of where and whereIn
+    // Build WHERE clause with proper handling of where, whereIn, and whereNotIn
     const whereClauses: string[] = [];
 
     if (where && where.length > 0) {
-      whereClauses.push(...where);
+      // Resolve aliases in WHERE clauses
+      const resolvedWhere = where.map((clause) => this.resolveWhereClause(clause, config));
+      whereClauses.push(...resolvedWhere);
     }
 
     if (whereIn) {
       Object.keys(whereIn).forEach((key) => {
         const values = whereIn[key];
         if (values && values.length > 0) {
-          whereClauses.push(`${escapeId(key)} IN (${values.map(() => '?').join(', ')})`);
+          // Resolve alias for whereIn key
+          const resolvedKey = this.resolveColumnName(key, config);
+          whereClauses.push(`${escapeId(resolvedKey)} IN (${values.map(() => '?').join(', ')})`);
+          additionalValues.push(...values);
+        }
+      });
+    }
+
+    if (whereNotIn) {
+      Object.keys(whereNotIn).forEach((key) => {
+        const values = whereNotIn[key];
+        if (values && values.length > 0) {
+          // Resolve alias for whereNotIn key
+          const resolvedKey = this.resolveColumnName(key, config);
+          whereClauses.push(
+            `${escapeId(resolvedKey)} NOT IN (${values.map(() => '?').join(', ')})`
+          );
           additionalValues.push(...values);
         }
       });
@@ -336,23 +469,60 @@ export class MySQLORM {
       }`;
     }
 
-    if (having) {
-      query += ` HAVING ${Object.keys(having)
-        .map((key) => `${escapeId(key)} = ?`)
-        .join(' AND ')}`;
-      additionalValues.push(...Object.values(having));
+    if (having && having.length > 0) {
+      // Enhanced HAVING with operator support (similar to WHERE)
+      query += ` HAVING ${having.join(' AND ')}`;
+      // Note: HAVING values should be included in the main query values array by the caller
     }
 
+    // Enhanced ORDER BY with support for multiple directions and alias resolution
     if (orderBy) {
-      query += ` ORDER BY ${
-        Array.isArray(orderBy) ? orderBy.map((o) => escapeId(o)).join(', ') : escapeId(orderBy)
-      }`;
-    } else {
-      query += ` ORDER BY ${escapeId(config.idField)}`;
-    }
+      const orderByClauses: string[] = [];
 
-    const direction = orderDirection?.toUpperCase() || 'ASC';
-    query += ` ${direction}`;
+      if (Array.isArray(orderBy)) {
+        orderBy.forEach((item) => {
+          if (typeof item === 'string') {
+            // Simple string: resolve alias
+            const resolvedColumn = this.resolveOrderByColumn(item, config);
+            orderByClauses.push(escapeId(resolvedColumn));
+          } else if (typeof item === 'object' && 'column' in item) {
+            // Object with column and direction
+            const resolvedColumn = this.resolveColumnName(item.column, config);
+            const dir = item.direction?.toUpperCase() || 'ASC';
+            orderByClauses.push(`${escapeId(resolvedColumn)} ${dir}`);
+          }
+        });
+      } else if (typeof orderBy === 'string') {
+        // Single string: resolve alias
+        const resolvedColumn = this.resolveOrderByColumn(orderBy, config);
+        orderByClauses.push(escapeId(resolvedColumn));
+      }
+
+      if (orderByClauses.length > 0) {
+        query += ` ORDER BY ${orderByClauses.join(', ')}`;
+
+        // Only apply global orderDirection if orderBy is a string or string array
+        if (orderDirection && typeof orderBy === 'string') {
+          query += ` ${orderDirection.toUpperCase()}`;
+        } else if (
+          orderDirection &&
+          Array.isArray(orderBy) &&
+          orderBy.every((item) => typeof item === 'string')
+        ) {
+          // Replace the ORDER BY clause to add direction to all columns
+          const columnsWithDirection = (orderBy as string[]).map((col) => {
+            const resolvedColumn = this.resolveOrderByColumn(col, config);
+            return `${escapeId(resolvedColumn)} ${orderDirection.toUpperCase()}`;
+          });
+          query = query.replace(
+            /ORDER BY .+?(?= LIMIT| OFFSET| UNION|$)/,
+            `ORDER BY ${columnsWithDirection.join(', ')}`
+          );
+        }
+      }
+    } else {
+      query += ` ORDER BY ${escapeId(config.idField)} ASC`;
+    }
 
     if (isCount) {
       query += ` LIMIT 1`;
@@ -529,6 +699,82 @@ export class MySQLORM {
         throw new Error(`Failed to insert data: ${error.message}`);
       } else {
         throw new Error('Failed to insert data: Database error occurred');
+      }
+    }
+  }
+
+  /**
+   * Batch insert multiple records into database
+   * @param table Table name
+   * @param data Array of data objects to insert
+   * @param transaction Optional transaction instance
+   * @returns Promise resolving to array of insert IDs
+   */
+  public async batchInsertData(
+    table: string,
+    data: Array<{ [k: string]: string | number | boolean | null }>,
+    transaction?: Transaction
+  ): Promise<number[]> {
+    if (!data || data.length === 0) {
+      return [];
+    }
+
+    const queryLogger = getQueryLogger();
+    const startTime = Date.now();
+
+    // Get keys from first object (assumes all objects have same structure)
+    const firstItem = data[0];
+    if (!firstItem) {
+      return [];
+    }
+    const keys = Object.keys(firstItem);
+
+    // Build values array - flatten all values
+    const allValues: Array<string | number | boolean | null> = [];
+    data.forEach((item) => {
+      keys.forEach((key) => {
+        const value = item[key];
+        if (value !== undefined) {
+          allValues.push(value);
+        }
+      });
+    });
+
+    // Build query with multiple value sets
+    const valuePlaceholders = data.map(() => `(${keys.map(() => '?').join(', ')})`).join(', ');
+    const query = `INSERT INTO ${escapeId(table)} (${keys
+      .map((k) => escapeId(k))
+      .join(', ')}) VALUES ${valuePlaceholders}`;
+
+    if (this.isDev) {
+      console.log(chalk.blue('Batch Insert Query:'), query);
+      console.log(chalk.cyan('Value Count:'), allValues.length);
+    }
+
+    try {
+      const connection = transaction?.getConnection() ?? this.pool;
+      const [result] = await connection.query<ResultSetHeader>(query, allValues);
+
+      const duration = Date.now() - startTime;
+      queryLogger.logQuery(query, allValues, duration);
+
+      // Generate array of insert IDs
+      const insertIds: number[] = [];
+      const firstId = result.insertId;
+      for (let i = 0; i < data.length; i++) {
+        insertIds.push(firstId + i);
+      }
+
+      return insertIds;
+    } catch (error) {
+      if (error instanceof Error) {
+        queryLogger.logError(query, error, allValues);
+      }
+
+      if (error instanceof Error && this.isDev) {
+        throw new Error(`Failed to batch insert data: ${error.message}`);
+      } else {
+        throw new Error('Failed to batch insert data: Database error occurred');
       }
     }
   }

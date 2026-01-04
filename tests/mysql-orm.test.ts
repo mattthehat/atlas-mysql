@@ -804,4 +804,789 @@ describe('MySQL ORM', () => {
       await expect(mysqlOrm.insertData('users', { userName: 'Test' })).rejects.toThrow();
     });
   });
+
+  describe('Alias Support', () => {
+    describe('Alias Resolution in WHERE clauses', () => {
+      it('should resolve field alias to column name in WHERE clause with = operator', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[{ id: 1, name: 'John Doe' }], []] as any)
+          .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            name: 'full_name',
+            email: 'email_address',
+          },
+          where: ['name = ?'],
+        };
+
+        await mysqlOrm.getData(config, ['John Doe']);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        // Should resolve 'name' to 'full_name' in WHERE clause
+        expect(query).toContain('WHERE full_name = ?');
+        // Should still have name as alias in SELECT
+        expect(query).toContain('AS `name`');
+      });
+
+      it('should resolve field alias in WHERE clause with != operator', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            status: 'user_status',
+          },
+          where: ['status != ?'],
+        };
+
+        await mysqlOrm.getData(config, ['deleted']);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('user_status != ?');
+      });
+
+      it('should resolve field alias in WHERE clause with comparison operators', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'products',
+          idField: 'product_id',
+          fields: {
+            id: 'product_id',
+            price: 'product_price',
+          },
+          where: ['price > ?', 'price <= ?'],
+        };
+
+        await mysqlOrm.getData(config, [100, 500]);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('product_price > ?');
+        expect(query).toContain('product_price <= ?');
+      });
+
+      it('should resolve field alias in WHERE clause with LIKE operator', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            name: 'full_name',
+          },
+          where: ['name LIKE ?'],
+        };
+
+        await mysqlOrm.getData(config, ['%John%']);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('full_name LIKE ?');
+      });
+
+      it('should handle multiple alias resolutions in WHERE clauses', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            name: 'full_name',
+            email: 'email_address',
+            status: 'user_status',
+          },
+          where: ['name = ?', 'email LIKE ?', 'status != ?'],
+        };
+
+        await mysqlOrm.getData(config, ['John', '%@example.com', 'deleted']);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('full_name = ?');
+        expect(query).toContain('email_address LIKE ?');
+        expect(query).toContain('user_status != ?');
+      });
+    });
+
+    describe('Alias Resolution in whereIn', () => {
+      it('should resolve field alias in whereIn clause', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            status: 'user_status',
+          },
+          whereIn: {
+            status: ['active', 'pending', 'verified'],
+          },
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('`user_status` IN (?, ?, ?)');
+      });
+    });
+
+    describe('Alias Resolution in whereNotIn', () => {
+      it('should resolve field alias in whereNotIn clause', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            status: 'user_status',
+          },
+          whereNotIn: {
+            status: ['deleted', 'banned', 'suspended'],
+          },
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('`user_status` NOT IN (?, ?, ?)');
+      });
+
+      it('should handle whereNotIn with multiple fields', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            status: 'user_status',
+            role: 'user_role',
+          },
+          whereNotIn: {
+            status: ['deleted', 'banned'],
+            role: ['guest'],
+          },
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('`user_status` NOT IN (?, ?)');
+        expect(query).toContain('`user_role` NOT IN (?)');
+      });
+
+      it('should handle whereNotIn with empty array', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            status: 'user_status',
+          },
+          whereNotIn: {
+            status: [],
+          },
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        // Empty array should not add NOT IN clause
+        expect(query).not.toContain('NOT IN');
+      });
+    });
+
+    describe('Alias Resolution in ORDER BY', () => {
+      it('should resolve field alias in simple ORDER BY string', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            name: 'full_name',
+          },
+          orderBy: 'name',
+          orderDirection: 'ASC',
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('ORDER BY `full_name` ASC');
+      });
+
+      it('should resolve field alias in ORDER BY array with direction suffix', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+            name: 'full_name',
+            created: 'created_at',
+          },
+          orderBy: ['name ASC', 'created DESC'],
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('ORDER BY');
+        // With direction suffix in the string, the whole thing gets escaped
+        expect(query).toMatch(/ORDER BY.*full_name.*ASC/);
+        expect(query).toMatch(/created_at.*DESC/);
+      });
+
+      it('should resolve field alias in ORDER BY with object notation', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        const config: QueryConfig = {
+          table: 'products',
+          idField: 'product_id',
+          fields: {
+            id: 'product_id',
+            price: 'product_price',
+            name: 'product_name',
+          },
+          orderBy: [
+            { column: 'price', direction: 'DESC' },
+            { column: 'name', direction: 'ASC' },
+          ],
+        };
+
+        await mysqlOrm.getData(config);
+
+        const [query] = vi.mocked(pool.query).mock.calls[0];
+        expect(query).toContain('ORDER BY');
+        expect(query).toContain('`product_price` DESC');
+        expect(query).toContain('`product_name` ASC');
+      });
+    });
+  });
+
+  describe('DISTINCT Support', () => {
+    it('should add DISTINCT to SELECT query when distinct is true', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[{ id: 1, city: 'London' }], []] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          city: 'user_city',
+        },
+        distinct: true,
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('SELECT DISTINCT');
+    });
+
+    it('should add DISTINCT to COUNT query when distinct is true', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 5 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'orders',
+        idField: 'order_id',
+        fields: {
+          id: 'order_id',
+        },
+        distinct: true,
+      };
+
+      await mysqlOrm.getData(config);
+
+      // getData makes two queries: one for data, one for count
+      expect(vi.mocked(pool.query)).toHaveBeenCalledTimes(2);
+      const countQuery = vi.mocked(pool.query).mock.calls[1][0] as unknown as string;
+      expect(countQuery).toContain('COUNT(DISTINCT');
+    });
+
+    it('should not add DISTINCT when distinct is false', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+        },
+        distinct: false,
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).not.toContain('DISTINCT');
+    });
+  });
+
+  describe('Batch Insert', () => {
+    it('should insert multiple records in a single query', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([
+        { insertId: 100, affectedRows: 3 },
+        [],
+      ] as any);
+
+      const data = [
+        { userName: 'User 1', userEmail: 'user1@example.com' },
+        { userName: 'User 2', userEmail: 'user2@example.com' },
+        { userName: 'User 3', userEmail: 'user3@example.com' },
+      ];
+
+      const insertIds = await mysqlOrm.batchInsertData('users', data);
+
+      expect(insertIds).toEqual([100, 101, 102]);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO'),
+        expect.arrayContaining([
+          'User 1',
+          'user1@example.com',
+          'User 2',
+          'user2@example.com',
+          'User 3',
+          'user3@example.com',
+        ])
+      );
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('VALUES (?, ?), (?, ?), (?, ?)');
+    });
+
+    it('should handle batch insert with null values', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([
+        { insertId: 200, affectedRows: 2 },
+        [],
+      ] as any);
+
+      const data = [
+        { userName: 'User 1', userMiddleName: null },
+        { userName: 'User 2', userMiddleName: 'Middle' },
+      ];
+
+      const insertIds = await mysqlOrm.batchInsertData('users', data);
+
+      expect(insertIds).toEqual([200, 201]);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO'),
+        expect.arrayContaining(['User 1', null, 'User 2', 'Middle'])
+      );
+    });
+
+    it('should return empty array for empty data', async () => {
+      const insertIds = await mysqlOrm.batchInsertData('users', []);
+      expect(insertIds).toEqual([]);
+    });
+
+    it('should handle batch insert within transaction', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([
+        { insertId: 300, affectedRows: 2 },
+        [],
+      ] as any);
+
+      const data = [
+        { userName: 'User A' },
+        { userName: 'User B' },
+      ];
+
+      await mysqlOrm.withTransaction(async (transaction) => {
+        const insertIds = await mysqlOrm.batchInsertData('users', data, transaction);
+        expect(insertIds).toEqual([300, 301]);
+      });
+
+      expect(pool.getConnection).toHaveBeenCalled();
+    });
+  });
+
+  describe('Enhanced HAVING Clause', () => {
+    it('should support HAVING with array of conditions', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'orders',
+        idField: 'order_id',
+        fields: {
+          id: 'order_id',
+          total: 'SUM(order_amount)',
+        },
+        groupBy: 'user_id',
+        having: ['SUM(order_amount) > 1000', 'COUNT(order_id) >= 5'],
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('HAVING');
+      expect(query).toContain('SUM(order_amount) > 1000');
+      expect(query).toContain('COUNT(order_id) >= 5');
+    });
+
+    it('should support HAVING with comparison operators', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'sales',
+        idField: 'sale_id',
+        fields: {
+          id: 'sale_id',
+          avgPrice: 'AVG(price)',
+        },
+        groupBy: 'category',
+        having: ['AVG(price) > 50', 'AVG(price) <= 500', 'COUNT(*) >= 10'],
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('HAVING');
+      expect(query).toContain('AVG(price) > 50');
+      expect(query).toContain('AVG(price) <= 500');
+    });
+  });
+
+  describe('Explicit Raw SQL Marker', () => {
+    it('should handle explicit raw SQL in field values', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[{ id: 1, formattedDate: '2024-01-01' }], []] as any)
+        .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'events',
+        idField: 'event_id',
+        fields: {
+          id: 'event_id',
+          formattedDate: { raw: "DATE_FORMAT(event_date, '%Y-%m-%d')" },
+        },
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain("DATE_FORMAT(event_date, '%Y-%m-%d')");
+      expect(query).toContain('AS `formattedDate`');
+    });
+
+    it('should handle multiple raw SQL expressions', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          age: { raw: 'TIMESTAMPDIFF(YEAR, birth_date, CURDATE())' },
+          fullAddress: { raw: "CONCAT(street, ', ', city, ', ', country)" },
+        },
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('TIMESTAMPDIFF(YEAR, birth_date, CURDATE())');
+      expect(query).toContain("CONCAT(street, ', ', city, ', ', country)");
+    });
+  });
+
+  describe('JOIN ON Clause Validation', () => {
+    it('should reject JOIN ON clause with SQL injection attempts', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+        },
+        joins: [
+          {
+            type: 'INNER',
+            table: 'roles',
+            on: "users.role_id = roles.role_id; DROP TABLE users; --",
+          },
+        ],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'Invalid JOIN ON clause: potentially dangerous pattern detected'
+      );
+    });
+
+    it('should reject JOIN ON clause with UNION injection', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+        },
+        joins: [
+          {
+            type: 'INNER',
+            table: 'roles',
+            on: 'users.role_id = roles.role_id UNION SELECT * FROM passwords',
+          },
+        ],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'Invalid JOIN ON clause: potentially dangerous pattern detected'
+      );
+    });
+
+    it('should reject JOIN ON clause with dangerous keywords', async () => {
+      const dangerousOnClauses = [
+        'users.id = roles.id OR 1=1 DELETE FROM users',
+        'users.id = roles.id; INSERT INTO logs VALUES (1)',
+        'users.id = roles.id /* comment */ DROP TABLE sessions',
+        'users.id = roles.id AND EXEC sp_executesql',
+      ];
+
+      for (const onClause of dangerousOnClauses) {
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: {
+            id: 'user_id',
+          },
+          joins: [
+            {
+              type: 'INNER',
+              table: 'roles',
+              on: onClause,
+            },
+          ],
+        };
+
+        await expect(mysqlOrm.getData(config)).rejects.toThrow(
+          'Invalid JOIN ON clause: potentially dangerous pattern detected'
+        );
+      }
+    });
+
+    it('should accept valid JOIN ON clauses', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+        },
+        joins: [
+          {
+            type: 'INNER',
+            table: 'roles',
+            on: 'users.role_id = roles.role_id',
+          },
+        ],
+      };
+
+      await expect(mysqlOrm.getData(config)).resolves.toBeDefined();
+    });
+  });
+
+  describe('Multiple ORDER BY Directions', () => {
+    it('should handle ORDER BY with array of strings and shared direction', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          name: 'full_name',
+          created: 'created_at',
+        },
+        orderBy: ['name', 'created'],
+        orderDirection: 'DESC',
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('ORDER BY');
+      expect(query).toContain('`full_name` DESC');
+      expect(query).toContain('`created_at` DESC');
+    });
+
+    it('should handle ORDER BY with mixed object and string notation', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'products',
+        idField: 'product_id',
+        fields: {
+          id: 'product_id',
+          price: 'product_price',
+          name: 'product_name',
+          stock: 'stock_count',
+        },
+        orderBy: [
+          { column: 'price', direction: 'DESC' },
+          { column: 'stock', direction: 'ASC' },
+          { column: 'name' },
+        ],
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('ORDER BY');
+      expect(query).toContain('`product_price` DESC');
+      expect(query).toContain('`stock_count` ASC');
+      expect(query).toContain('`product_name` ASC');
+    });
+
+    it('should handle ORDER BY with default ASC when direction not specified', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          name: 'full_name',
+        },
+        orderBy: [{ column: 'name' }],
+      };
+
+      await mysqlOrm.getData(config);
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('ORDER BY');
+      expect(query).toContain('`full_name` ASC');
+    });
+  });
 });

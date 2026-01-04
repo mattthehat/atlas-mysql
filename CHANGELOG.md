@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-01-04
+
+### Added
+- **Field Alias Resolution**: Automatic resolution of field aliases in WHERE, ORDER BY, whereIn, and whereNotIn clauses
+  - No configuration required - aliases are resolved automatically
+  - Works with all SQL operators (=, !=, <, >, <=, >=, LIKE, etc.)
+  - Example: Use `name` alias instead of `full_name` in all query clauses
+
+- **DISTINCT Support**: Query unique values with the `distinct` option
+  - Add `distinct: true` to QueryConfig
+  - Works with COUNT queries for accurate distinct counts
+  - Combines with WHERE, ORDER BY, and other query options
+
+- **whereNotIn Support**: Exclude multiple values efficiently
+  - New `whereNotIn` property in QueryConfig
+  - Accepts object with field keys and array values
+  - Works with alias resolution
+  - Example: `whereNotIn: { status: ['deleted', 'banned'] }`
+
+- **Enhanced HAVING Clause**: Full operator support in HAVING conditions
+  - Changed from object to array format
+  - Supports all comparison operators (>, <, >=, <=, !=, etc.)
+  - Example: `having: ['COUNT(order_id) >= 5', 'SUM(amount) > 1000']`
+
+- **Explicit Raw SQL Markers**: Use `{ raw: 'SQL' }` for calculated fields
+  - Clear distinction between column names and SQL expressions
+  - Example: `age: { raw: 'TIMESTAMPDIFF(YEAR, birth_date, CURDATE())' }`
+  - Works with any MySQL function or expression
+
+- **Batch Insert**: High-performance multi-row inserts
+  - New `batchInsertData()` method
+  - Insert multiple records in a single query
+  - Returns array of all insert IDs
+  - Supports transactions
+  - 10-100x faster than individual inserts for bulk operations
+
+- **Multiple ORDER BY Directions**: Sort by multiple columns with different directions
+  - Object notation: `[{ column: 'price', direction: 'DESC' }, { column: 'name', direction: 'ASC' }]`
+  - String notation: `['price DESC', 'name ASC']`
+  - Array with shared direction: `orderBy: ['category', 'name'], orderDirection: 'ASC'`
+
+- **Enhanced Security**: JOIN ON clause validation
+  - Automatic detection and rejection of SQL injection attempts
+  - Validates against dangerous keywords (DROP, DELETE, INSERT, UNION, etc.)
+  - Blocks SQL comment patterns and statement separators
+  - Throws clear error messages for invalid patterns
+
+### Changed
+- **BREAKING**: HAVING clause changed from object to array format
+  - Old: `having: { 'COUNT(orders)': 5 }`
+  - New: `having: ['COUNT(orders) >= 5']`
+  - Enables full operator support instead of just equality
+
+### Improved
+- Better TypeScript type safety across all new features
+- Comprehensive test coverage for all new functionality
+- Extensive documentation with real-world examples
+- Enhanced error messages for better debugging
+
+### Migration Guide from v1.4.0
+
+#### HAVING Clause
+```typescript
+// Before (v1.4.0):
+having: {
+  'COUNT(orders)': 5,
+  'SUM(amount)': 1000
+}
+
+// After (v1.5.0):
+having: [
+  'COUNT(orders) >= 5',    // Now supports all operators!
+  'SUM(amount) > 1000'
+]
+```
+
+#### Field Aliases (New Feature - No Migration Needed)
+```typescript
+// v1.5.0: Use friendly aliases throughout your queries
+const query: QueryConfig = {
+  fields: {
+    name: 'full_name',
+    email: 'email_address',
+  },
+  where: ['name LIKE ?'],      // Automatically resolves to full_name
+  orderBy: 'email',             // Automatically resolves to email_address
+  whereNotIn: { name: [...] }   // Works with aliases too!
+};
+```
+
 ## [1.3.0] - 2025-11-15
 
 ### Removed
@@ -45,7 +135,7 @@ where: ['is_deleted != ?', 'is_banned != ?']
 - Transaction management with automatic rollback
 - Connection pooling using mysql2
 - Comprehensive query logging and performance monitoring
-- SQL injection protection with parameterized queries
+- SQL injection protection with parameterised queries
 - Schema management for table creation
 - Environment-based configuration
 - Detailed error handling and reporting
@@ -71,7 +161,7 @@ where: ['is_deleted != ?', 'is_banned != ?']
 - `createTransaction()`: Manual transaction control
 
 ### Security
-- Parameterized queries prevent SQL injection
+- Parameterised queries prevent SQL injection
 - Input validation and sanitization
 - Secure connection management
 - Environment variable configuration
@@ -109,12 +199,12 @@ where: ['is_deleted != ?', 'is_banned != ?']
 This is the first stable release of Atlas MySQL, a powerful and type-safe MySQL ORM for Node.js applications.
 
 **Key Features:**
-- 🔒 **Security First**: Built-in SQL injection protection
-- 🚀 **Performance**: Optimized connection pooling and query execution
-- 🔧 **Developer Friendly**: Full TypeScript support and comprehensive logging
-- 📊 **Monitoring**: Built-in query performance tracking
-- 🔄 **Transactions**: Robust transaction management
-- 📝 **Documentation**: Extensive documentation and examples
+- **Security First**: Built-in SQL injection protection
+- **Performance**: Optimized connection pooling and query execution
+- **Developer Friendly**: Full TypeScript support and comprehensive logging
+- **Monitoring**: Built-in query performance tracking
+- **Transactions**: Robust transaction management
+- **Documentation**: Extensive documentation and examples
 
 **Getting Started:**
 ```bash
