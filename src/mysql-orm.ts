@@ -241,14 +241,14 @@ export class MySQLORM {
       user: config.user,
       database: config.database,
       password: config.password,
-      port: config.port || 3306,
+      port: config.port ?? 3306,
       waitForConnections: true,
-      connectionLimit: config.connectionLimit || 10,
-      maxIdle: config.maxIdle || 10,
-      idleTimeout: config.idleTimeout || 60000,
-      queueLimit: config.queueLimit || 0,
-      enableKeepAlive: config.enableKeepAlive || true,
-      keepAliveInitialDelay: config.keepAliveInitialDelay || 0,
+      connectionLimit: config.connectionLimit ?? 10,
+      maxIdle: config.maxIdle ?? 10,
+      idleTimeout: config.idleTimeout ?? 60000,
+      queueLimit: config.queueLimit ?? 0,
+      enableKeepAlive: config.enableKeepAlive ?? true,
+      keepAliveInitialDelay: config.keepAliveInitialDelay ?? 0,
       typeCast: function (field, next: () => any) {
         if (field.type === 'TINY') {
           return field.string() === '1'; // 1 = true, 0 = false
@@ -291,7 +291,10 @@ export class MySQLORM {
     if (match && match[1]) {
       const fieldName = match[1];
       const resolvedField = this.resolveColumnName(fieldName, config);
-      return clause.replace(fieldName, resolvedField);
+      return clause.replace(
+        new RegExp(fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+        resolvedField
+      );
     }
 
     return clause;
@@ -313,12 +316,12 @@ export class MySQLORM {
   }
 
   /**
-   * Validate JOIN ON clause to prevent SQL injection
-   * @param onClause The ON clause to validate
-   * @throws Error if ON clause appears to contain user input or dangerous patterns
+   * Validate a SQL clause to prevent SQL injection
+   * @param clause The SQL clause to validate
+   * @param context Description of the clause type for error messages
+   * @throws Error if clause appears to contain dangerous patterns
    */
-  private validateJoinOnClause(onClause: string): void {
-    // Check for potential SQL injection patterns
+  private validateSqlClause(clause: string, context: string): void {
     const dangerousPatterns = [
       /;/g, // Multiple statements
       /--/g, // SQL comments
@@ -330,14 +333,32 @@ export class MySQLORM {
       /\bUPDATE\b/i,
       /\bEXEC\b/i,
       /\bEXECUTE\b/i,
+      /\bSLEEP\s*\(/i,
+      /\bBENCHMARK\s*\(/i,
+      /\bLOAD_FILE\s*\(/i,
+      /\bINTO\s+OUTFILE\b/i,
+      /\bINTO\s+DUMPFILE\b/i,
     ];
 
     for (const pattern of dangerousPatterns) {
-      if (pattern.test(onClause)) {
-        throw new Error(
-          `Invalid JOIN ON clause: potentially dangerous pattern detected. ON clauses must only contain column comparisons.`
-        );
+      if (pattern.test(clause)) {
+        throw new Error(`Invalid ${context}: potentially dangerous pattern detected.`);
       }
+    }
+  }
+
+  /**
+   * Validate that a string is a safe SQL identifier (alphanumeric, underscores, hyphens only)
+   * Used for DDL values like charset, collate, and engine names
+   * @param value The value to validate
+   * @param context Description for error messages
+   * @throws Error if value contains unsafe characters
+   */
+  private validateIdentifier(value: string, context: string): void {
+    if (!/^[a-zA-Z0-9_]+$/.test(value)) {
+      throw new Error(
+        `Invalid ${context}: must contain only alphanumeric characters and underscores.`
+      );
     }
   }
 
@@ -394,7 +415,8 @@ export class MySQLORM {
           'raw' in fieldValue &&
           typeof fieldValue.raw === 'string'
         ) {
-          // Handle explicit raw SQL marker
+          // Handle explicit raw SQL marker - validate for injection
+          this.validateSqlClause(fieldValue.raw, 'raw SQL field');
           query += `${fieldValue.raw} AS ${escapeId(key)}, `;
         } else if (typeof fieldValue === 'string') {
           // Check if the field value contains SQL functions or is already escaped
@@ -418,8 +440,7 @@ export class MySQLORM {
 
     if (joins) {
       joins.forEach((join) => {
-        // Validate JOIN ON clause for security
-        this.validateJoinOnClause(join.on);
+        this.validateSqlClause(join.on, 'JOIN ON clause');
         query += ` ${join.type.toUpperCase()} JOIN ${escapeId(join.table)} ON ${join.on}`;
       });
     }
@@ -428,8 +449,11 @@ export class MySQLORM {
     const whereClauses: string[] = [];
 
     if (where && where.length > 0) {
-      // Resolve aliases in WHERE clauses
-      const resolvedWhere = where.map((clause) => this.resolveWhereClause(clause, config));
+      // Validate and resolve aliases in WHERE clauses
+      const resolvedWhere = where.map((clause) => {
+        this.validateSqlClause(clause, 'WHERE clause');
+        return this.resolveWhereClause(clause, config);
+      });
       whereClauses.push(...resolvedWhere);
     }
 
@@ -470,58 +494,62 @@ export class MySQLORM {
     }
 
     if (having && having.length > 0) {
-      // Enhanced HAVING with operator support (similar to WHERE)
+      // Validate HAVING clauses
+      having.forEach((clause) => this.validateSqlClause(clause, 'HAVING clause'));
       query += ` HAVING ${having.join(' AND ')}`;
       // Note: HAVING values should be included in the main query values array by the caller
     }
 
     // Enhanced ORDER BY with support for multiple directions and alias resolution
-    if (orderBy) {
-      const orderByClauses: string[] = [];
+    // Skip ORDER BY for count queries as it has no effect and adds overhead
+    if (!isCount) {
+      if (orderBy) {
+        const orderByClauses: string[] = [];
 
-      if (Array.isArray(orderBy)) {
-        orderBy.forEach((item) => {
-          if (typeof item === 'string') {
-            // Simple string: resolve alias
-            const resolvedColumn = this.resolveOrderByColumn(item, config);
-            orderByClauses.push(escapeId(resolvedColumn));
-          } else if (typeof item === 'object' && 'column' in item) {
-            // Object with column and direction
-            const resolvedColumn = this.resolveColumnName(item.column, config);
-            const dir = item.direction?.toUpperCase() || 'ASC';
-            orderByClauses.push(`${escapeId(resolvedColumn)} ${dir}`);
-          }
-        });
-      } else if (typeof orderBy === 'string') {
-        // Single string: resolve alias
-        const resolvedColumn = this.resolveOrderByColumn(orderBy, config);
-        orderByClauses.push(escapeId(resolvedColumn));
-      }
-
-      if (orderByClauses.length > 0) {
-        query += ` ORDER BY ${orderByClauses.join(', ')}`;
-
-        // Only apply global orderDirection if orderBy is a string or string array
-        if (orderDirection && typeof orderBy === 'string') {
-          query += ` ${orderDirection.toUpperCase()}`;
-        } else if (
-          orderDirection &&
-          Array.isArray(orderBy) &&
-          orderBy.every((item) => typeof item === 'string')
-        ) {
-          // Replace the ORDER BY clause to add direction to all columns
-          const columnsWithDirection = (orderBy as string[]).map((col) => {
-            const resolvedColumn = this.resolveOrderByColumn(col, config);
-            return `${escapeId(resolvedColumn)} ${orderDirection.toUpperCase()}`;
+        if (Array.isArray(orderBy)) {
+          orderBy.forEach((item) => {
+            if (typeof item === 'string') {
+              // Simple string: resolve alias
+              const resolvedColumn = this.resolveOrderByColumn(item, config);
+              orderByClauses.push(escapeId(resolvedColumn));
+            } else if (typeof item === 'object' && 'column' in item) {
+              // Object with column and direction
+              const resolvedColumn = this.resolveColumnName(item.column, config);
+              const dir = item.direction?.toUpperCase() || 'ASC';
+              orderByClauses.push(`${escapeId(resolvedColumn)} ${dir}`);
+            }
           });
-          query = query.replace(
-            /ORDER BY .+?(?= LIMIT| OFFSET| UNION|$)/,
-            `ORDER BY ${columnsWithDirection.join(', ')}`
-          );
+        } else if (typeof orderBy === 'string') {
+          // Single string: resolve alias
+          const resolvedColumn = this.resolveOrderByColumn(orderBy, config);
+          orderByClauses.push(escapeId(resolvedColumn));
         }
+
+        if (orderByClauses.length > 0) {
+          query += ` ORDER BY ${orderByClauses.join(', ')}`;
+
+          // Only apply global orderDirection if orderBy is a string or string array
+          if (orderDirection && typeof orderBy === 'string') {
+            query += ` ${orderDirection.toUpperCase()}`;
+          } else if (
+            orderDirection &&
+            Array.isArray(orderBy) &&
+            orderBy.every((item) => typeof item === 'string')
+          ) {
+            // Replace the ORDER BY clause to add direction to all columns
+            const columnsWithDirection = (orderBy as string[]).map((col) => {
+              const resolvedColumn = this.resolveOrderByColumn(col, config);
+              return `${escapeId(resolvedColumn)} ${orderDirection.toUpperCase()}`;
+            });
+            query = query.replace(
+              /ORDER BY .+?(?= LIMIT| OFFSET| UNION|$)/,
+              `ORDER BY ${columnsWithDirection.join(', ')}`
+            );
+          }
+        }
+      } else {
+        query += ` ORDER BY ${escapeId(config.idField)} ASC`;
       }
-    } else {
-      query += ` ORDER BY ${escapeId(config.idField)} ASC`;
     }
 
     if (isCount) {
@@ -562,22 +590,34 @@ export class MySQLORM {
    */
   public async getData<T extends Record<string, any>>(
     query: QueryConfig,
-    values: Array<string | number | boolean | null> = []
+    values: Array<string | number | boolean | null> = [],
+    options?: { skipCount?: boolean }
   ): Promise<{ rows: T[]; count: number }> {
     const queryLogger = getQueryLogger();
     const startTime = Date.now();
 
+    const queryResult = this.buildQuery(query);
+    const allValues = [...values, ...queryResult.additionalValues];
+
     try {
-      const queryResult = this.buildQuery(query);
-      const countQueryResult = this.buildQuery(query, true);
-
-      // Combine user-provided values with additional values from whereIn/having
-      const allValues = [...values, ...queryResult.additionalValues];
-      const allCountValues = [...values, ...countQueryResult.additionalValues];
-
       if (this.isDev) {
         console.log(chalk.cyan('Values:'), allValues);
       }
+
+      if (options?.skipCount) {
+        const [rowsResult] = await this.pool.query(queryResult.query, allValues);
+
+        const duration = Date.now() - startTime;
+        queryLogger.logQuery(queryResult.query, allValues, duration);
+
+        return {
+          rows: rowsResult as T[],
+          count: -1,
+        };
+      }
+
+      const countQueryResult = this.buildQuery(query, true);
+      const allCountValues = [...values, ...countQueryResult.additionalValues];
 
       const [rowsResult, countRowsResult] = await Promise.all([
         this.pool.query(queryResult.query, allValues),
@@ -596,8 +636,6 @@ export class MySQLORM {
         count: countResult?.count || 0,
       };
     } catch (error) {
-      const queryResult = this.buildQuery(query);
-      const allValues = [...values, ...queryResult.additionalValues];
       if (error instanceof Error) {
         queryLogger.logError(queryResult.query, error, allValues);
       }
@@ -624,8 +662,8 @@ export class MySQLORM {
     const queryLogger = getQueryLogger();
     const startTime = Date.now();
 
-    query.limit = 1;
-    const queryResult = this.buildQuery(query);
+    const queryWithLimit = { ...query, limit: 1 };
+    const queryResult = this.buildQuery(queryWithLimit);
 
     // Combine user-provided values with additional values from whereIn/having
     const allValues = [...values, ...queryResult.additionalValues];
@@ -785,10 +823,7 @@ export class MySQLORM {
    * @param transaction Optional transaction instance
    * @returns Promise resolving to number of affected rows
    */
-  public async updateData(
-    config: UpdateDataConfig,
-    transaction?: Transaction
-  ): Promise<number> {
+  public async updateData(config: UpdateDataConfig, transaction?: Transaction): Promise<number> {
     const queryLogger = getQueryLogger();
     const startTime = Date.now();
 
@@ -921,8 +956,8 @@ export class MySQLORM {
     let sql = 'JSON_OBJECT(';
     const entries = Object.entries(config);
     entries.forEach(([key, value], index) => {
-      // Keys in JSON_OBJECT are string literals
-      sql += `'${key}', `;
+      // Keys in JSON_OBJECT are string literals - use escape() to prevent injection
+      sql += `${escape(key)}, `;
       if (this.isObject(value)) {
         // Nested JSON object
         sql += this.getJsonSql(value);
@@ -1032,8 +1067,14 @@ export class MySQLORM {
               column.type.toLowerCase()
             )
           ) {
-            if (charset) query += ` CHARACTER SET ${charset}`;
-            if (collate) query += ` COLLATE ${collate}`;
+            if (charset) {
+              this.validateIdentifier(charset, 'character set');
+              query += ` CHARACTER SET ${charset}`;
+            }
+            if (collate) {
+              this.validateIdentifier(collate, 'collation');
+              query += ` COLLATE ${collate}`;
+            }
           }
 
           query += nullable !== false ? ' NULL' : ' NOT NULL';
@@ -1083,7 +1124,16 @@ export class MySQLORM {
       // Foreign keys
       if (foreignKeys) {
         foreignKeys.forEach((fk) => {
-          query += `, FOREIGN KEY (${escapeId(fk.column)}) REFERENCES ${fk.reference}`;
+          // Parse and escape the reference (expected format: "table(column)" or "table (column)")
+          const refMatch = fk.reference.match(/^(\w+)\s*\((\w+)\)$/);
+          if (!refMatch) {
+            throw new Error(
+              `Invalid foreign key reference format: "${fk.reference}". Expected "table(column)".`
+            );
+          }
+          const refTable = refMatch[1] as string;
+          const refColumn = refMatch[2] as string;
+          query += `, FOREIGN KEY (${escapeId(fk.column)}) REFERENCES ${escapeId(refTable)}(${escapeId(refColumn)})`;
           if (fk.onDelete) query += ` ON DELETE ${fk.onDelete}`;
           if (fk.onUpdate) query += ` ON UPDATE ${fk.onUpdate}`;
         });
@@ -1102,11 +1152,22 @@ export class MySQLORM {
           comment,
         } = tableOptions;
 
-        query += ` ENGINE=${engine || 'InnoDB'}`;
-        if (autoIncrement) query += ` AUTO_INCREMENT=${autoIncrement}`;
+        const safeEngine = engine || 'InnoDB';
+        this.validateIdentifier(safeEngine, 'engine');
+        query += ` ENGINE=${safeEngine}`;
+        if (autoIncrement) {
+          const safeAutoInc = Math.max(1, Math.floor(Math.abs(autoIncrement)));
+          query += ` AUTO_INCREMENT=${safeAutoInc}`;
+        }
         if (rowFormat) query += ` ROW_FORMAT=${rowFormat}`;
-        if (charset) query += ` DEFAULT CHARACTER SET ${charset}`;
-        if (collate) query += ` COLLATE ${collate}`;
+        if (charset) {
+          this.validateIdentifier(charset, 'character set');
+          query += ` DEFAULT CHARACTER SET ${charset}`;
+        }
+        if (collate) {
+          this.validateIdentifier(collate, 'collation');
+          query += ` COLLATE ${collate}`;
+        }
         if (comment) query += ` COMMENT=${escape(comment)}`;
       } else {
         query += ` ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4`;

@@ -697,11 +697,11 @@ describe('MySQL ORM', () => {
 
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'name'");
-      expect(result).toContain("`full_name`"); // Column reference, not literal
+      expect(result).toContain('`full_name`'); // Column reference, not literal
       expect(result).toContain("'age'");
       expect(result).toContain('`user_age`'); // Column reference
       expect(result).toContain("'city'");
-      expect(result).toContain("`user_city`"); // Column reference
+      expect(result).toContain('`user_city`'); // Column reference
       expect(result).toContain(')');
     });
 
@@ -716,9 +716,9 @@ describe('MySQL ORM', () => {
 
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'name'");
-      expect(result).toContain("`full_name`");
+      expect(result).toContain('`full_name`');
       expect(result).toContain("'middleName'");
-      expect(result).toContain("`null`"); // Null is converted to string "null" then escaped
+      expect(result).toContain('`null`'); // Null is converted to string "null" then escaped
       expect(result).toContain(')');
     });
 
@@ -735,12 +735,12 @@ describe('MySQL ORM', () => {
 
       expect(result).toContain('JSON_OBJECT(');
       expect(result).toContain("'user'");
-      expect(result).toContain("`user_name`");
+      expect(result).toContain('`user_name`');
       expect(result).toContain("'address'");
       expect(result).toContain("'street'");
-      expect(result).toContain("`street_address`");
+      expect(result).toContain('`street_address`');
       expect(result).toContain("'city'");
-      expect(result).toContain("`city_name`");
+      expect(result).toContain('`city_name`');
     });
 
     it('should generate JSON_ARRAYAGG SQL with array of objects', () => {
@@ -756,9 +756,9 @@ describe('MySQL ORM', () => {
       expect(result).toContain("'id'");
       expect(result).toContain('`order_id`');
       expect(result).toContain("'name'");
-      expect(result).toContain("`product_name`");
+      expect(result).toContain('`product_name`');
       expect(result).toContain('`item_id`');
-      expect(result).toContain("`item_name`");
+      expect(result).toContain('`item_name`');
       expect(result).toContain(')');
     });
 
@@ -772,7 +772,7 @@ describe('MySQL ORM', () => {
 
       expect(result).toContain('JSON_ARRAYAGG('); // Fixed: now uses MySQL's JSON_ARRAYAGG
       expect(result).toContain('`item_price`');
-      expect(result).toContain("`null`");
+      expect(result).toContain('`null`');
       expect(result).toContain(')');
     });
   });
@@ -1214,10 +1214,7 @@ describe('MySQL ORM', () => {
       const mysql = await import('mysql2/promise');
       const pool = mysql.default.createPool({} as any);
 
-      vi.mocked(pool.query).mockResolvedValueOnce([
-        { insertId: 100, affectedRows: 3 },
-        [],
-      ] as any);
+      vi.mocked(pool.query).mockResolvedValueOnce([{ insertId: 100, affectedRows: 3 }, []] as any);
 
       const data = [
         { userName: 'User 1', userEmail: 'user1@example.com' },
@@ -1248,10 +1245,7 @@ describe('MySQL ORM', () => {
       const mysql = await import('mysql2/promise');
       const pool = mysql.default.createPool({} as any);
 
-      vi.mocked(pool.query).mockResolvedValueOnce([
-        { insertId: 200, affectedRows: 2 },
-        [],
-      ] as any);
+      vi.mocked(pool.query).mockResolvedValueOnce([{ insertId: 200, affectedRows: 2 }, []] as any);
 
       const data = [
         { userName: 'User 1', userMiddleName: null },
@@ -1276,15 +1270,9 @@ describe('MySQL ORM', () => {
       const mysql = await import('mysql2/promise');
       const pool = mysql.default.createPool({} as any);
 
-      vi.mocked(pool.query).mockResolvedValueOnce([
-        { insertId: 300, affectedRows: 2 },
-        [],
-      ] as any);
+      vi.mocked(pool.query).mockResolvedValueOnce([{ insertId: 300, affectedRows: 2 }, []] as any);
 
-      const data = [
-        { userName: 'User A' },
-        { userName: 'User B' },
-      ];
+      const data = [{ userName: 'User A' }, { userName: 'User B' }];
 
       await mysqlOrm.withTransaction(async (transaction) => {
         const insertIds = await mysqlOrm.batchInsertData('users', data, transaction);
@@ -1414,7 +1402,7 @@ describe('MySQL ORM', () => {
           {
             type: 'INNER',
             table: 'roles',
-            on: "users.role_id = roles.role_id; DROP TABLE users; --",
+            on: 'users.role_id = roles.role_id; DROP TABLE users; --',
           },
         ],
       };
@@ -1587,6 +1575,338 @@ describe('MySQL ORM', () => {
       const [query] = vi.mocked(pool.query).mock.calls[0];
       expect(query).toContain('ORDER BY');
       expect(query).toContain('`full_name` ASC');
+    });
+  });
+
+  describe('WHERE Clause Validation', () => {
+    it('should reject WHERE clauses with SQL injection attempts', async () => {
+      const dangerousClauses = [
+        'user_id = 1; DROP TABLE users',
+        'user_id = 1 -- comment',
+        'user_id = 1 /* block comment */',
+        'user_id = 1 UNION SELECT * FROM passwords',
+        'user_id = 1 OR DELETE FROM users',
+        'user_id = 1 OR INSERT INTO logs VALUES (1)',
+        'user_id = 1 OR UPDATE users SET admin = 1',
+      ];
+
+      for (const clause of dangerousClauses) {
+        const config: QueryConfig = {
+          table: 'users',
+          idField: 'user_id',
+          fields: { id: 'user_id' },
+          where: [clause],
+        };
+
+        await expect(mysqlOrm.getData(config)).rejects.toThrow(
+          'Invalid WHERE clause: potentially dangerous pattern detected'
+        );
+      }
+    });
+
+    it('should reject WHERE clauses with SLEEP/BENCHMARK injection', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id' },
+        where: ['user_id = 1 OR SLEEP(5)'],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'Invalid WHERE clause: potentially dangerous pattern detected'
+      );
+    });
+
+    it('should accept valid WHERE clauses', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id', name: 'full_name' },
+        where: ['full_name = ?', 'user_id > ?'],
+      };
+
+      await expect(mysqlOrm.getData(config, ['John', 0])).resolves.toBeDefined();
+    });
+  });
+
+  describe('HAVING Clause Validation', () => {
+    it('should reject HAVING clauses with SQL injection attempts', async () => {
+      const config: QueryConfig = {
+        table: 'orders',
+        idField: 'order_id',
+        fields: { id: 'order_id', total: 'SUM(amount)' },
+        groupBy: 'user_id',
+        having: ['SUM(amount) > 100; DROP TABLE orders'],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'Invalid HAVING clause: potentially dangerous pattern detected'
+      );
+    });
+
+    it('should accept valid HAVING clauses', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'orders',
+        idField: 'order_id',
+        fields: { id: 'order_id', total: 'SUM(amount)' },
+        groupBy: 'user_id',
+        having: ['SUM(amount) > 100', 'COUNT(*) >= 5'],
+      };
+
+      await expect(mysqlOrm.getData(config)).resolves.toBeDefined();
+    });
+  });
+
+  describe('Raw SQL Field Validation', () => {
+    it('should reject raw SQL fields with injection attempts', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: {
+          id: 'user_id',
+          evil: { raw: '1; DROP TABLE users; --' },
+        },
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'Invalid raw SQL field: potentially dangerous pattern detected'
+      );
+    });
+
+    it('should accept valid raw SQL expressions', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'events',
+        idField: 'event_id',
+        fields: {
+          id: 'event_id',
+          formattedDate: { raw: "DATE_FORMAT(event_date, '%Y-%m-%d')" },
+        },
+      };
+
+      await expect(mysqlOrm.getData(config)).resolves.toBeDefined();
+    });
+  });
+
+  describe('getFirst does not mutate config', () => {
+    it('should not modify the original config object', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id' },
+        limit: 50,
+      };
+
+      await mysqlOrm.getFirst(config);
+
+      expect(config.limit).toBe(50);
+    });
+  });
+
+  describe('COUNT query optimization', () => {
+    it('should not include ORDER BY in count queries', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id', name: 'full_name' },
+        orderBy: 'full_name',
+        orderDirection: 'DESC',
+      };
+
+      await mysqlOrm.getData(config);
+
+      // The count query is the second call
+      const countQuery = vi.mocked(pool.query).mock.calls[1][0] as unknown as string;
+      expect(countQuery).not.toContain('ORDER BY');
+      expect(countQuery).toContain('COUNT');
+    });
+  });
+
+  describe('skipCount option', () => {
+    it('should skip the count query when skipCount is true', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([[{ id: 1, name: 'Test User' }], []] as any);
+
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id', name: 'full_name' },
+      };
+
+      const result = await mysqlOrm.getData(config, [], { skipCount: true });
+
+      expect(result.rows).toHaveLength(1);
+      expect(result.count).toBe(-1);
+      // Should only call query once (no count query)
+      expect(pool.query).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Expanded injection pattern detection', () => {
+    it('should reject SLEEP injection in JOIN ON clause', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id' },
+        joins: [
+          {
+            type: 'INNER',
+            table: 'roles',
+            on: 'users.role_id = roles.role_id AND SLEEP(5)',
+          },
+        ],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'potentially dangerous pattern detected'
+      );
+    });
+
+    it('should reject BENCHMARK injection', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id' },
+        where: ['user_id = BENCHMARK(10000000, SHA1(1))'],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'potentially dangerous pattern detected'
+      );
+    });
+
+    it('should reject LOAD_FILE injection', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id' },
+        where: ["user_name = LOAD_FILE('/etc/passwd')"],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'potentially dangerous pattern detected'
+      );
+    });
+
+    it('should reject INTO OUTFILE injection', async () => {
+      const config: QueryConfig = {
+        table: 'users',
+        idField: 'user_id',
+        fields: { id: 'user_id' },
+        where: ["1=1 INTO OUTFILE '/tmp/data.txt'"],
+      };
+
+      await expect(mysqlOrm.getData(config)).rejects.toThrow(
+        'potentially dangerous pattern detected'
+      );
+    });
+  });
+
+  describe('createTable identifier validation', () => {
+    it('should reject invalid charset in column options', async () => {
+      await expect(
+        mysqlOrm.createTable({
+          table: 'test',
+          columns: [
+            {
+              name: 'name',
+              type: 'varchar',
+              options: { length: 255, charset: "utf8'; DROP TABLE test; --" },
+            },
+          ],
+          primaryKey: 'name',
+        })
+      ).rejects.toThrow('Invalid character set');
+    });
+
+    it('should reject invalid engine name', async () => {
+      await expect(
+        mysqlOrm.createTable({
+          table: 'test',
+          columns: [{ name: 'id', type: 'int', options: { autoIncrement: true } }],
+          primaryKey: 'id',
+          tableOptions: { engine: 'InnoDB; DROP TABLE test' },
+        })
+      ).rejects.toThrow('Invalid engine');
+    });
+
+    it('should reject invalid foreign key reference format', async () => {
+      await expect(
+        mysqlOrm.createTable({
+          table: 'test',
+          columns: [
+            { name: 'id', type: 'int' },
+            { name: 'user_id', type: 'int' },
+          ],
+          primaryKey: 'id',
+          foreignKeys: [
+            {
+              column: 'user_id',
+              reference: 'users(id); DROP TABLE test; --',
+              onDelete: 'CASCADE',
+            },
+          ],
+        })
+      ).rejects.toThrow('Invalid foreign key reference format');
+    });
+
+    it('should accept valid foreign key reference', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+
+      vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+      await expect(
+        mysqlOrm.createTable({
+          table: 'orders',
+          columns: [
+            { name: 'id', type: 'int', options: { autoIncrement: true } },
+            { name: 'user_id', type: 'int' },
+          ],
+          primaryKey: 'id',
+          foreignKeys: [
+            {
+              column: 'user_id',
+              reference: 'users(id)',
+              onDelete: 'CASCADE',
+            },
+          ],
+        })
+      ).resolves.toBeUndefined();
     });
   });
 });
