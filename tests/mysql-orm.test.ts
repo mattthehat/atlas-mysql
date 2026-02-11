@@ -1222,9 +1222,9 @@ describe('MySQL ORM', () => {
         { userName: 'User 3', userEmail: 'user3@example.com' },
       ];
 
-      const insertIds = await mysqlOrm.batchInsertData('users', data);
+      const result = await mysqlOrm.batchInsertData('users', data);
 
-      expect(insertIds).toEqual([100, 101, 102]);
+      expect(result).toEqual({ firstInsertId: 100, affectedRows: 3 });
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO'),
         expect.arrayContaining([
@@ -1252,18 +1252,18 @@ describe('MySQL ORM', () => {
         { userName: 'User 2', userMiddleName: 'Middle' },
       ];
 
-      const insertIds = await mysqlOrm.batchInsertData('users', data);
+      const result = await mysqlOrm.batchInsertData('users', data);
 
-      expect(insertIds).toEqual([200, 201]);
+      expect(result).toEqual({ firstInsertId: 200, affectedRows: 2 });
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO'),
         expect.arrayContaining(['User 1', null, 'User 2', 'Middle'])
       );
     });
 
-    it('should return empty array for empty data', async () => {
-      const insertIds = await mysqlOrm.batchInsertData('users', []);
-      expect(insertIds).toEqual([]);
+    it('should return zero values for empty data', async () => {
+      const result = await mysqlOrm.batchInsertData('users', []);
+      expect(result).toEqual({ firstInsertId: 0, affectedRows: 0 });
     });
 
     it('should handle batch insert within transaction', async () => {
@@ -1275,8 +1275,8 @@ describe('MySQL ORM', () => {
       const data = [{ userName: 'User A' }, { userName: 'User B' }];
 
       await mysqlOrm.withTransaction(async (transaction) => {
-        const insertIds = await mysqlOrm.batchInsertData('users', data, transaction);
-        expect(insertIds).toEqual([300, 301]);
+        const result = await mysqlOrm.batchInsertData('users', data, transaction);
+        expect(result).toEqual({ firstInsertId: 300, affectedRows: 2 });
       });
 
       expect(pool.getConnection).toHaveBeenCalled();

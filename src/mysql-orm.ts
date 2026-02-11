@@ -135,7 +135,7 @@ type ColumnOptions = {
   charset?: string;
   collate?: string;
   comment?: string;
-  onUpdate?: string;
+  onUpdate?: 'CURRENT_TIMESTAMP';
   generated?: {
     expression: string;
     type: 'VIRTUAL' | 'STORED';
@@ -250,7 +250,7 @@ export class MySQLORM {
       enableKeepAlive: config.enableKeepAlive ?? true,
       keepAliveInitialDelay: config.keepAliveInitialDelay ?? 0,
       typeCast: function (field, next: () => any) {
-        if (field.type === 'TINY') {
+        if (field.type === 'TINY' && field.length === 1) {
           return field.string() === '1'; // 1 = true, 0 = false
         }
         return next();
@@ -291,10 +291,8 @@ export class MySQLORM {
     if (match && match[1]) {
       const fieldName = match[1];
       const resolvedField = this.resolveColumnName(fieldName, config);
-      return clause.replace(
-        new RegExp(fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
-        resolvedField
-      );
+      // Only replace the leading field reference, not occurrences in the value portion
+      return resolvedField + clause.slice(fieldName.length);
     }
 
     return clause;
@@ -322,10 +320,12 @@ export class MySQLORM {
    * @throws Error if clause appears to contain dangerous patterns
    */
   private validateSqlClause(clause: string, context: string): void {
-    const dangerousPatterns = [
+    // Core dangerous patterns: DDL/DML statements, comments, multi-statement
+    const corePatterns = [
       /;/g, // Multiple statements
       /--/g, // SQL comments
       /\/\*/g, // Block comments
+      /#/g, // MySQL line comments
       /\bUNION\b/i,
       /\bDROP\b/i,
       /\bDELETE\b/i,
@@ -338,11 +338,45 @@ export class MySQLORM {
       /\bLOAD_FILE\s*\(/i,
       /\bINTO\s+OUTFILE\b/i,
       /\bINTO\s+DUMPFILE\b/i,
+      /\bALTER\b/i,
+      /\bCREATE\b/i,
+      /\bTRUNCATE\b/i,
+      /\bGRANT\b/i,
+      /\bREVOKE\b/i,
+      /\bSHOW\b/i,
+      /\bDESCRIBE\b/i,
+      /\bSET\b/i,
+      /\bCALL\b/i,
+      /\bPREPARE\b/i,
+      /\bDEALLOCATE\b/i,
+      /\bHANDLER\b/i,
+      /\bLOAD\b/i,
     ];
 
-    for (const pattern of dangerousPatterns) {
+    // Extra patterns for user-input-facing clauses (WHERE, HAVING, JOIN ON)
+    // These block encoding tricks that could bypass the core patterns
+    const strictPatterns = [
+      /0x[0-9a-fA-F]+/i, // Hex-encoded values
+      /\\x[0-9a-fA-F]{2}/i, // Hex escape sequences
+      /CHAR\s*\(/i, // CHAR() used to build strings from codes
+      /CONCAT\s*\(/i, // CONCAT used to evade pattern matching
+      /CONCAT_WS\s*\(/i,
+      /UNHEX\s*\(/i, // UNHEX to decode hex strings
+      /CONV\s*\(/i, // CONV for base conversion tricks
+    ];
+
+    for (const pattern of corePatterns) {
       if (pattern.test(clause)) {
         throw new Error(`Invalid ${context}: potentially dangerous pattern detected.`);
+      }
+    }
+
+    // Apply strict patterns only for non-raw-SQL contexts
+    if (context !== 'raw SQL field' && context !== 'field expression') {
+      for (const pattern of strictPatterns) {
+        if (pattern.test(clause)) {
+          throw new Error(`Invalid ${context}: potentially dangerous pattern detected.`);
+        }
       }
     }
   }
@@ -421,6 +455,7 @@ export class MySQLORM {
         } else if (typeof fieldValue === 'string') {
           // Check if the field value contains SQL functions or is already escaped
           if (fieldValue.includes('(') || fieldValue.includes('`') || fieldValue.includes("'")) {
+            this.validateSqlClause(fieldValue, 'field expression');
             query += `${fieldValue} AS ${escapeId(key)}, `;
           } else {
             query += `${escapeId(fieldValue)} AS ${escapeId(key)}, `;
@@ -752,9 +787,9 @@ export class MySQLORM {
     table: string,
     data: Array<{ [k: string]: string | number | boolean | null }>,
     transaction?: Transaction
-  ): Promise<number[]> {
+  ): Promise<{ firstInsertId: number; affectedRows: number }> {
     if (!data || data.length === 0) {
-      return [];
+      return { firstInsertId: 0, affectedRows: 0 };
     }
 
     const queryLogger = getQueryLogger();
@@ -763,18 +798,16 @@ export class MySQLORM {
     // Get keys from first object (assumes all objects have same structure)
     const firstItem = data[0];
     if (!firstItem) {
-      return [];
+      return { firstInsertId: 0, affectedRows: 0 };
     }
     const keys = Object.keys(firstItem);
 
-    // Build values array - flatten all values
+    // Build values array - flatten all values, using null for missing keys
     const allValues: Array<string | number | boolean | null> = [];
     data.forEach((item) => {
       keys.forEach((key) => {
         const value = item[key];
-        if (value !== undefined) {
-          allValues.push(value);
-        }
+        allValues.push(value !== undefined ? value : null);
       });
     });
 
@@ -796,14 +829,10 @@ export class MySQLORM {
       const duration = Date.now() - startTime;
       queryLogger.logQuery(query, allValues, duration);
 
-      // Generate array of insert IDs
-      const insertIds: number[] = [];
-      const firstId = result.insertId;
-      for (let i = 0; i < data.length; i++) {
-        insertIds.push(firstId + i);
-      }
-
-      return insertIds;
+      return {
+        firstInsertId: result.insertId,
+        affectedRows: result.affectedRows,
+      };
     } catch (error) {
       if (error instanceof Error) {
         queryLogger.logError(query, error, allValues);
@@ -831,6 +860,9 @@ export class MySQLORM {
 
     const setKeys = Object.keys(data);
     const setValues = Object.values(data);
+
+    // Validate WHERE clauses to prevent SQL injection
+    where.forEach((clause) => this.validateSqlClause(clause, 'WHERE clause'));
 
     const query = `UPDATE ${escapeId(table)} SET ${setKeys
       .map((k) => `${escapeId(k)} = ?`)

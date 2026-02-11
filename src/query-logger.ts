@@ -38,6 +38,8 @@ export type QueryLoggerConfig = {
   maxFileSize: number;
   /** Enable log file rotation */
   rotateOnSize: boolean;
+  /** Log parameter values (disable to prevent sensitive data in logs) */
+  logValues: boolean;
 };
 
 /**
@@ -51,6 +53,7 @@ const defaultConfig: QueryLoggerConfig = {
   slowQueryThreshold: parseInt(process.env.SLOW_QUERY_THRESHOLD || '1000', 10), // 1 second
   maxFileSize: 10 * 1024 * 1024, // 10MB
   rotateOnSize: true,
+  logValues: process.env.NODE_ENV === 'development',
 };
 
 /**
@@ -131,8 +134,10 @@ export class QueryLogger {
 
     parts.push(entry.query);
 
-    if (entry.values && entry.values.length > 0) {
+    if (this.config.logValues && entry.values && entry.values.length > 0) {
       parts.push(`| Values: ${JSON.stringify(entry.values)}`);
+    } else if (entry.values && entry.values.length > 0) {
+      parts.push(`| Values: [${entry.values.length} parameters redacted]`);
     }
 
     if (entry.error) {
@@ -181,7 +186,9 @@ export class QueryLogger {
 
     const level = levelColor(`[${entry.level.toUpperCase()}]`);
     const query = chalk.cyan(entry.query);
-    const values = entry.values ? chalk.gray(`| Values: ${JSON.stringify(entry.values)}`) : '';
+    const values = this.config.logValues && entry.values
+      ? chalk.gray(`| Values: ${JSON.stringify(entry.values)}`)
+      : entry.values ? chalk.gray(`| Values: [${entry.values.length} parameters redacted]`) : '';
 
     console.log(`${timestamp} ${level} ${duration} ${query} ${values}`);
 

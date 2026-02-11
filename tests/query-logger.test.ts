@@ -187,7 +187,7 @@ describe('QueryLogger', () => {
       expect(logCall).toContain('[INFO]');
       expect(logCall).toContain('[150ms]');
       expect(logCall).toContain('SELECT * FROM users');
-      expect(logCall).toContain('Values: ["param1"]');
+      expect(logCall).toContain('Values: [1 parameters redacted]');
     });
 
     it('should log slow queries as warnings', () => {
@@ -223,7 +223,7 @@ describe('QueryLogger', () => {
       const logCall = mockWriteStream.write.mock.calls[0][0];
       expect(logCall).toContain('[ERROR]');
       expect(logCall).toContain('SELECT * FROM users');
-      expect(logCall).toContain('Values: ["param1"]');
+      expect(logCall).toContain('Values: [1 parameters redacted]');
       expect(logCall).toContain('Error: Connection failed');
       expect(logCall).toContain('Stack: Error stack trace');
     });
@@ -451,8 +451,8 @@ describe('QueryLogger', () => {
       // Check query
       expect(logCall).toContain('SELECT * FROM users WHERE id = ?');
 
-      // Check values
-      expect(logCall).toContain('Values: [123]');
+      // Check values (redacted by default in non-dev mode)
+      expect(logCall).toContain('Values: [1 parameters redacted]');
 
       // Check newline at end
       expect(logCall.endsWith('\n')).toBe(true);
