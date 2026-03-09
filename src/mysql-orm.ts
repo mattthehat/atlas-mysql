@@ -76,7 +76,54 @@ export type QueryConfig = {
   union?: Array<QueryConfig>;
   /** Use DISTINCT in SELECT */
   distinct?: boolean;
+  /** Order results by vector distance from a query vector (MySQL 9.0+) */
+  orderByVector?: {
+    column: string;
+    queryVector: number[];
+    metric?: VectorDistanceMetric;
+    direction?: 'ASC' | 'DESC';
+  };
 };
+
+/**
+ * Distance metric for vector similarity search (MySQL 9.0+)
+ * - 'cosine': Cosine distance — best for text/semantic embeddings
+ * - 'l2': Euclidean (L2) distance — best for geometric/spatial distance
+ */
+export type VectorDistanceMetric = 'cosine' | 'l2';
+
+/**
+ * Configuration for a KNN vector similarity search
+ */
+export type VectorSearchConfig = {
+  /** Table to search */
+  table: string;
+  /** Column containing vector data (VECTOR type) */
+  vectorColumn: string;
+  /** Query vector as a number array */
+  queryVector: number[];
+  /** Distance metric to use (default: 'cosine') */
+  metric?: VectorDistanceMetric;
+  /** Alias for the distance column in results (default: 'distance') */
+  distanceAlias?: string;
+  /** Number of nearest neighbours to return (default: 10) */
+  k?: number;
+  /** Additional fields to SELECT (alias → column) */
+  fields?: { [alias: string]: string };
+  /** Optional WHERE conditions (validated against SQL injection) */
+  where?: string[];
+  /** Optional JOIN clauses */
+  joins?: Array<{
+    type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL';
+    table: string;
+    on: string;
+  }>;
+};
+
+/**
+ * Result row from a vectorSearch() call — includes a numeric distance field
+ */
+export type VectorSearchResult<T = Record<string, any>> = T & { distance: number };
 
 /**
  * MySQL column types supported by the ORM
@@ -120,7 +167,8 @@ type ColumnType =
   | 'multipoint'
   | 'multilinestring'
   | 'multipolygon'
-  | 'geometrycollection';
+  | 'geometrycollection'
+  | 'vector';
 
 /**
  * Column options for table creation
@@ -159,7 +207,7 @@ type TableOptions = {
  * Index configuration
  */
 type Index = {
-  type?: 'UNIQUE' | 'FULLTEXT' | 'SPATIAL';
+  type?: 'UNIQUE' | 'FULLTEXT' | 'SPATIAL' | 'VECTOR';
   columns: string[];
 };
 
@@ -538,7 +586,11 @@ export class MySQLORM {
     // Enhanced ORDER BY with support for multiple directions and alias resolution
     // Skip ORDER BY for count queries as it has no effect and adds overhead
     if (!isCount) {
-      if (orderBy) {
+      if (config.orderByVector) {
+        const { column, queryVector, metric = 'cosine', direction = 'ASC' } = config.orderByVector;
+        const distanceExpr = this.buildVectorDistanceSQL(column, queryVector, metric);
+        query += ` ORDER BY ${distanceExpr} ${direction.toUpperCase()}`;
+      } else if (orderBy) {
         const orderByClauses: string[] = [];
 
         if (Array.isArray(orderBy)) {
@@ -978,6 +1030,101 @@ export class MySQLORM {
   }
 
   /**
+   * Perform a K-Nearest Neighbor (KNN) vector similarity search using MySQL 9.0+ vector functions.
+   * Requires MySQL 9.0+ with native VECTOR column support.
+   *
+   * @param config Vector search configuration
+   * @param values Optional parameterised values for WHERE clauses
+   * @returns Promise resolving to rows ordered by distance (closest first)
+   *
+   * @example
+   * const results = await orm.vectorSearch<{ id: number; title: string }>({
+   *   table: 'documents',
+   *   vectorColumn: 'embedding',
+   *   queryVector: [0.1, 0.2, 0.3],
+   *   metric: 'cosine',
+   *   k: 5,
+   *   fields: { id: 'docId', title: 'docTitle' },
+   * });
+   */
+  public async vectorSearch<T extends Record<string, any>>(
+    config: VectorSearchConfig,
+    values: Array<string | number | boolean | null> = []
+  ): Promise<VectorSearchResult<T>[]> {
+    const queryLogger = getQueryLogger();
+    const startTime = Date.now();
+
+    const {
+      table,
+      vectorColumn,
+      queryVector,
+      metric = 'cosine',
+      distanceAlias = 'distance',
+      k = 10,
+      fields = {},
+      where = [],
+      joins = [],
+    } = config;
+
+    if (!Array.isArray(queryVector) || queryVector.length === 0) {
+      throw new Error('vectorSearch: queryVector must be a non-empty number array');
+    }
+
+    const safeK = Math.max(1, Math.floor(Math.abs(k)));
+    const distanceExpr = this.buildVectorDistanceSQL(vectorColumn, queryVector, metric);
+
+    const selectParts: string[] = [];
+    for (const alias in fields) {
+      selectParts.push(`${escapeId(fields[alias]!)} AS ${escapeId(alias)}`);
+    }
+    selectParts.push(`${distanceExpr} AS ${escapeId(distanceAlias)}`);
+
+    let query = `SELECT ${selectParts.join(', ')} FROM ${escapeId(table)}`;
+
+    if (joins.length > 0) {
+      joins.forEach((join) => {
+        this.validateSqlClause(join.on, 'JOIN ON clause');
+        query += ` ${join.type.toUpperCase()} JOIN ${escapeId(join.table)} ON ${join.on}`;
+      });
+    }
+
+    const whereClauses: string[] = [];
+    if (where.length > 0) {
+      where.forEach((clause) => {
+        this.validateSqlClause(clause, 'WHERE clause');
+        whereClauses.push(clause);
+      });
+    }
+    if (whereClauses.length > 0) {
+      query += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY ${distanceExpr} ASC`;
+    query += ` LIMIT ${safeK}`;
+
+    if (this.isDev) {
+      console.log(chalk.blue('Vector Search Query:'), chalk.magentaBright(query));
+      console.log(chalk.cyan('Values:'), values);
+    }
+
+    try {
+      const [rows] = await this.pool.query(query, values);
+      const duration = Date.now() - startTime;
+      queryLogger.logQuery(query, values, duration);
+      return rows as VectorSearchResult<T>[];
+    } catch (error) {
+      if (error instanceof Error) {
+        queryLogger.logError(query, error, values);
+      }
+      console.error('Error in vectorSearch:', error);
+      if (error instanceof Error && this.isDev) {
+        throw new Error(`Failed to perform vector search: ${error.message}`);
+      }
+      throw new Error('Failed to perform vector search: Database error occurred');
+    }
+  }
+
+  /**
    *
    * @param config object
    * @description Generates SQL for JSON object aggregation using MySQL's JSON_OBJECT function
@@ -1042,6 +1189,71 @@ export class MySQLORM {
   }
 
   /**
+   * Build a MySQL vector distance SQL expression.
+   * Constructed entirely from typed inputs — never from raw user strings.
+   * @param column Column name containing VECTOR data
+   * @param queryVector Query vector as number array
+   * @param metric Distance metric ('cosine' | 'l2')
+   * @returns SQL expression string
+   */
+  private buildVectorDistanceSQL(
+    column: string,
+    queryVector: number[],
+    metric: VectorDistanceMetric = 'cosine'
+  ): string {
+    const vectorStr = MySQLORM.vectorToString(queryVector);
+    const escapedVectorStr = escape(vectorStr);
+    const escapedColumn = escapeId(column);
+
+    switch (metric) {
+      case 'cosine':
+        return `VEC_DISTANCE_COSINE(${escapedColumn}, STRING_TO_VECTOR(${escapedVectorStr}))`;
+      case 'l2':
+        return `VEC_DISTANCE_L2(${escapedColumn}, STRING_TO_VECTOR(${escapedVectorStr}))`;
+      default:
+        throw new Error(`Unsupported vector distance metric: ${metric}`);
+    }
+  }
+
+  /**
+   * Convert a number array to MySQL STRING_TO_VECTOR() compatible format.
+   * @param vector Array of finite floating-point numbers
+   * @returns String in format "[n1,n2,n3]"
+   */
+  public static vectorToString(vector: number[]): string {
+    if (!Array.isArray(vector) || vector.length === 0) {
+      throw new Error('vectorToString: vector must be a non-empty number array');
+    }
+    return `[${vector
+      .map((v) => {
+        if (typeof v !== 'number' || !isFinite(v)) {
+          throw new Error('vectorToString: all elements must be finite numbers');
+        }
+        return v;
+      })
+      .join(',')}]`;
+  }
+
+  /**
+   * Parse a MySQL VECTOR string representation back into a number array.
+   * @param vectorString String in format "[n1,n2,n3]"
+   * @returns Array of numbers
+   */
+  public static stringToVector(vectorString: string): number[] {
+    if (typeof vectorString !== 'string') {
+      throw new Error('stringToVector: input must be a string');
+    }
+    const trimmed = vectorString.trim().replace(/^\[/, '').replace(/\]$/, '');
+    return trimmed.split(',').map((s) => {
+      const n = parseFloat(s.trim());
+      if (isNaN(n)) {
+        throw new Error(`stringToVector: invalid number "${s.trim()}" in vector string`);
+      }
+      return n;
+    });
+  }
+
+  /**
    * Create database table
    * @param config Table creation configuration
    * @returns Promise resolving when table is created
@@ -1070,6 +1282,20 @@ export class MySQLORM {
         if (column.type.toLowerCase() === 'enum' && column.options?.enum) {
           query += `ENUM(${column.options.enum.map((val) => escape(val)).join(', ')})`;
         } else {
+          // VECTOR columns require a dimension length and must be NOT NULL (MySQL 9.0+)
+          if (column.type.toLowerCase() === 'vector') {
+            if (!column.options?.length) {
+              throw new Error(
+                `Column "${column.name}": VECTOR columns require a length (dimensions), e.g. { length: 1536 }`
+              );
+            }
+            if (column.options?.nullable !== false) {
+              throw new Error(
+                `Column "${column.name}": VECTOR columns must have nullable: false (MySQL 9.0+ requirement)`
+              );
+            }
+          }
+
           query += column.type.toUpperCase();
 
           if (column.options?.length) {

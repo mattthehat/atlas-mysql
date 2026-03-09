@@ -10,6 +10,13 @@ A type-safe MySQL ORM for Node.js applications. It provides query building, tran
 
 - Type-safe queries with TypeScript support
 - Flexible query builder with method chaining
+- **NEW in v2.1.0**: Native vector/embedding semantic search (`vectorSearch()`) with cosine and L2 metrics
+- **NEW in v2.1.0**: `orderByVector` in `getData()` for KNN similarity ordering
+- **NEW in v2.1.0**: `VECTOR(n)` column type and `VECTOR` index support in `createTable()`
+- **NEW in v2.0.0**: Enhanced SQL injection prevention with stricter pattern detection
+- **NEW in v2.0.0**: `batchInsertData` now returns `{ firstInsertId, affectedRows }` instead of an ID array
+- **NEW in v2.0.0**: TINYINT(1) columns automatically cast to boolean
+- **NEW in v2.0.0**: Fixed field alias resolution to only replace leading field references in WHERE clauses
 - **NEW in v1.5.0**: Automatic field alias resolution in WHERE, ORDER BY, whereIn, and whereNotIn
 - **NEW in v1.5.0**: DISTINCT support for unique value queries
 - **NEW in v1.5.0**: whereNotIn for excluding multiple values
@@ -549,7 +556,7 @@ const reportQuery: QueryConfig = {
 
 ### Batch Insert
 
-**New in v1.5.0**: Insert multiple records in a single query for better performance:
+**New in v1.5.0**: Insert multiple records in a single query for better performance. **Updated in v2.0.0**: returns `{ firstInsertId, affectedRows }` instead of an ID array.
 
 ```typescript
 // Insert multiple users at once
@@ -559,10 +566,9 @@ const newUsers = [
   { full_name: 'Carol White', email_address: 'carol@example.com', is_active: 1 },
 ];
 
-// Returns array of insert IDs
-const insertIds = await orm.batchInsertData('users', newUsers);
-console.log(`Created users with IDs: ${insertIds.join(', ')}`);
-// Output: Created users with IDs: 101, 102, 103
+// Returns { firstInsertId, affectedRows }
+const { firstInsertId, affectedRows } = await orm.batchInsertData('users', newUsers);
+console.log(`Inserted ${affectedRows} users starting at ID ${firstInsertId}`);
 ```
 
 #### Batch Insert with Transaction
@@ -576,7 +582,7 @@ await orm.withTransaction(async (transaction) => {
     { order_id: 500, product_id: 20, quantity: 3, price: 15.99 },
   ];
 
-  const itemIds = await orm.batchInsertData('order_items', orderItems, transaction);
+  const { affectedRows } = await orm.batchInsertData('order_items', orderItems, transaction);
 
   // Update order total
   const total = orderItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
@@ -588,7 +594,7 @@ await orm.withTransaction(async (transaction) => {
     transaction,
   });
 
-  return itemIds;
+  return affectedRows;
 });
 ```
 
@@ -1553,6 +1559,129 @@ Here are some things that can help improve performance:
 4. **Batch Operations**: Use transactions for multiple related operations
 5. **Limit Result Sets**: Use LIMIT clauses to avoid fetching too much data
 6. **Cache When Appropriate**: Consider caching for frequently accessed data
+
+## Vector Semantic Search
+
+**New in v2.1.0**: Atlas MySQL supports MySQL 9.0+ native `VECTOR` columns for semantic/embedding similarity search. Store embeddings (e.g. from OpenAI, Cohere, or a local model) and query by cosine or L2 distance.
+
+> **Requirements**: MySQL 9.0 or later.
+
+### Creating a Table with a Vector Column
+
+```typescript
+import { CreateTableConfig } from 'atlas-mysql';
+
+const tableConfig: CreateTableConfig = {
+  table: 'documents',
+  dropIfExists: false,
+  columns: [
+    { name: 'id', type: 'int', options: { autoIncrement: true, unsigned: true } },
+    { name: 'content', type: 'text', options: { nullable: false } },
+    {
+      name: 'embedding',
+      type: 'vector',
+      options: {
+        length: 1536,      // dimensions — must match your embedding model
+        nullable: false,   // required for VECTOR columns
+      },
+    },
+    { name: 'created_at', type: 'timestamp', options: { default: 'CURRENT_TIMESTAMP' } },
+  ],
+  primaryKey: 'id',
+  indexes: [
+    { type: 'VECTOR', columns: ['embedding'] },
+  ],
+};
+
+await orm.createTable(tableConfig);
+```
+
+### Running a Vector Search
+
+Use `vectorSearch()` to find the K nearest neighbours to a query embedding:
+
+```typescript
+import { MySQLORM, VectorSearchConfig, VectorSearchResult } from 'atlas-mysql';
+
+interface Document {
+  id: number;
+  content: string;
+}
+
+const queryEmbedding = [0.12, -0.45, 0.78, /* ... 1536 floats */];
+
+const results: VectorSearchResult<Document>[] = await orm.vectorSearch<Document>({
+  table: 'documents',
+  vectorColumn: 'embedding',
+  queryVector: queryEmbedding,
+  metric: 'cosine',          // 'cosine' (default) or 'l2'
+  distanceAlias: 'distance', // name of the distance column in results (default: 'distance')
+  k: 5,                      // top-K results (default: 10)
+  fields: {
+    id: 'id',
+    content: 'content',
+  },
+});
+
+results.forEach(r => {
+  console.log(`[${r.distance.toFixed(4)}] ${r.content}`);
+});
+```
+
+Each result includes all requested fields **plus** a `distance` property (lower = more similar for both metrics).
+
+### Filtering with WHERE
+
+Pass parameterised WHERE clauses just like `getData()`:
+
+```typescript
+const results = await orm.vectorSearch<Document>({
+  table: 'documents',
+  vectorColumn: 'embedding',
+  queryVector: queryEmbedding,
+  k: 10,
+  fields: { id: 'id', content: 'content', category: 'category' },
+  where: ['category = ?', 'is_published = ?'],
+}, ['technology', 1]);
+```
+
+### Vector Ordering in `getData()`
+
+Use `orderByVector` inside a standard `getData()` call to sort by similarity without the strict KNN interface:
+
+```typescript
+const { rows } = await orm.getData<Document>({
+  table: 'documents',
+  idField: 'id',
+  fields: { id: 'id', content: 'content' },
+  orderByVector: {
+    column: 'embedding',
+    queryVector: queryEmbedding,
+    metric: 'cosine',
+    direction: 'ASC',   // ASC = most similar first (default)
+  },
+  limit: 20,
+});
+```
+
+### Utility Methods
+
+```typescript
+// Convert a number[] to MySQL's '[x,y,z,...]' vector string
+const vectorStr = MySQLORM.vectorToString([0.1, 0.2, 0.3]);
+// => '[0.1,0.2,0.3]'
+
+// Parse a MySQL vector string back to number[]
+const vec = MySQLORM.stringToVector('[0.1,0.2,0.3]');
+// => [0.1, 0.2, 0.3]
+```
+
+### Distance Metrics
+
+| Metric   | MySQL Function          | Best for                              |
+|----------|-------------------------|---------------------------------------|
+| `cosine` | `VEC_DISTANCE_COSINE()` | Text/semantic embeddings (default)    |
+| `l2`     | `VEC_DISTANCE_L2()`     | Geometric / image embeddings          |
 
 ## Migration from Other ORMs
 

@@ -15,6 +15,9 @@ export {
   type FieldValue,
   type OrderByConfig,
   type JsonObject,
+  type VectorDistanceMetric,
+  type VectorSearchConfig,
+  type VectorSearchResult,
 } from './mysql-orm';
 
 // Export query logger functionality

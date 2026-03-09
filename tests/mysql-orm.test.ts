@@ -1909,4 +1909,377 @@ describe('MySQL ORM', () => {
       ).resolves.toBeUndefined();
     });
   });
+
+  describe('Vector Search', () => {
+    describe('vectorSearch()', () => {
+      it('should generate correct SQL for cosine metric', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([
+          [{ id: 1, title: 'Doc A', distance: 0.12 }],
+          [],
+        ] as any);
+
+        await mysqlOrm.vectorSearch({
+          table: 'documents',
+          vectorColumn: 'embedding',
+          queryVector: [0.1, 0.2, 0.3],
+          metric: 'cosine',
+          k: 5,
+          fields: { id: 'docId', title: 'docTitle' },
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('VEC_DISTANCE_COSINE');
+        expect(query).toContain('STRING_TO_VECTOR');
+        expect(query).toContain('LIMIT 5');
+        expect(query).toContain('ORDER BY');
+        expect(query).toContain('FROM `documents`');
+      });
+
+      it('should generate correct SQL for l2 metric', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[{ distance: 0.5 }], []] as any);
+
+        await mysqlOrm.vectorSearch({
+          table: 'items',
+          vectorColumn: 'vec',
+          queryVector: [1.0, 2.0],
+          metric: 'l2',
+          k: 3,
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('VEC_DISTANCE_L2');
+        expect(query).toContain('LIMIT 3');
+      });
+
+      it('should default to cosine metric and k=10', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        await mysqlOrm.vectorSearch({
+          table: 'docs',
+          vectorColumn: 'embedding',
+          queryVector: [0.1, 0.2],
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('VEC_DISTANCE_COSINE');
+        expect(query).toContain('LIMIT 10');
+      });
+
+      it('should include WHERE clause when provided', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        await mysqlOrm.vectorSearch(
+          {
+            table: 'docs',
+            vectorColumn: 'embedding',
+            queryVector: [0.1, 0.2],
+            where: ['category_id = ?'],
+          },
+          [42]
+        );
+
+        const [query, values] = vi.mocked(pool.query).mock.calls[0] as [string, any[]];
+        expect(query).toContain('WHERE');
+        expect(query).toContain('category_id = ?');
+        expect(values).toEqual([42]);
+      });
+
+      it('should block SQL injection in WHERE clause', async () => {
+        await expect(
+          mysqlOrm.vectorSearch({
+            table: 'docs',
+            vectorColumn: 'embedding',
+            queryVector: [0.1, 0.2],
+            where: ['1=1; DROP TABLE docs'],
+          })
+        ).rejects.toThrow('Invalid WHERE clause');
+      });
+
+      it('should include additional fields in SELECT', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        await mysqlOrm.vectorSearch({
+          table: 'docs',
+          vectorColumn: 'embedding',
+          queryVector: [0.1, 0.2],
+          fields: { id: 'docId', title: 'docTitle' },
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('`docId` AS `id`');
+        expect(query).toContain('`docTitle` AS `title`');
+      });
+
+      it('should use custom distanceAlias', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        await mysqlOrm.vectorSearch({
+          table: 'docs',
+          vectorColumn: 'embedding',
+          queryVector: [0.1, 0.2],
+          distanceAlias: 'score',
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('AS `score`');
+      });
+
+      it('should return empty array when no results', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        const result = await mysqlOrm.vectorSearch({
+          table: 'docs',
+          vectorColumn: 'embedding',
+          queryVector: [0.1, 0.2],
+        });
+
+        expect(result).toEqual([]);
+      });
+
+      it('should throw on empty queryVector', async () => {
+        await expect(
+          mysqlOrm.vectorSearch({
+            table: 'docs',
+            vectorColumn: 'embedding',
+            queryVector: [],
+          })
+        ).rejects.toThrow('queryVector must be a non-empty number array');
+      });
+
+      it('should wrap database errors with friendly message', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockRejectedValueOnce(new Error('connection lost'));
+
+        await expect(
+          mysqlOrm.vectorSearch({
+            table: 'docs',
+            vectorColumn: 'embedding',
+            queryVector: [0.1, 0.2],
+          })
+        ).rejects.toThrow('Failed to perform vector search: Database error occurred');
+      });
+    });
+
+    describe('vectorToString()', () => {
+      it('should convert a number array to MySQL vector string format', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(MySQLORM.vectorToString([0.1, 0.2, 0.3])).toBe('[0.1,0.2,0.3]');
+      });
+
+      it('should throw on empty array', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(() => MySQLORM.vectorToString([])).toThrow(
+          'vectorToString: vector must be a non-empty number array'
+        );
+      });
+
+      it('should throw on non-finite values', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(() => MySQLORM.vectorToString([0.1, Infinity])).toThrow(
+          'vectorToString: all elements must be finite numbers'
+        );
+      });
+
+      it('should throw on NaN values', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(() => MySQLORM.vectorToString([0.1, NaN])).toThrow(
+          'vectorToString: all elements must be finite numbers'
+        );
+      });
+    });
+
+    describe('stringToVector()', () => {
+      it('should parse a MySQL vector string into a number array', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(MySQLORM.stringToVector('[0.1,0.2,0.3]')).toEqual([0.1, 0.2, 0.3]);
+      });
+
+      it('should handle whitespace in the string', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(MySQLORM.stringToVector('[0.1, 0.2, 0.3]')).toEqual([0.1, 0.2, 0.3]);
+      });
+
+      it('should throw on malformed input', async () => {
+        const { MySQLORM } = await import('../src/mysql-orm');
+        expect(() => MySQLORM.stringToVector('[0.1,abc,0.3]')).toThrow(
+          'invalid number "abc"'
+        );
+      });
+    });
+
+    describe('createTable with vector column', () => {
+      it('should generate VECTOR(dimensions) SQL for vector column', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        await mysqlOrm.createTable({
+          table: 'documents',
+          columns: [
+            { name: 'docId', type: 'int', options: { autoIncrement: true, nullable: false } },
+            {
+              name: 'embedding',
+              type: 'vector',
+              options: { length: 3, nullable: false },
+            },
+          ],
+          primaryKey: 'docId',
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('VECTOR(3)');
+        expect(query).toContain('NOT NULL');
+      });
+
+      it('should throw when VECTOR column is missing length', async () => {
+        await expect(
+          mysqlOrm.createTable({
+            table: 'docs',
+            columns: [
+              {
+                name: 'embedding',
+                type: 'vector',
+                options: { nullable: false },
+              },
+            ],
+            primaryKey: 'embedding',
+          })
+        ).rejects.toThrow('VECTOR columns require a length');
+      });
+
+      it('should throw when VECTOR column is missing nullable: false', async () => {
+        await expect(
+          mysqlOrm.createTable({
+            table: 'docs',
+            columns: [
+              {
+                name: 'embedding',
+                type: 'vector',
+                options: { length: 128 },
+              },
+            ],
+            primaryKey: 'embedding',
+          })
+        ).rejects.toThrow('VECTOR columns must have nullable: false');
+      });
+
+      it('should generate VECTOR INDEX in SQL', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query).mockResolvedValueOnce([[], []] as any);
+
+        await mysqlOrm.createTable({
+          table: 'documents',
+          columns: [
+            { name: 'docId', type: 'int', options: { autoIncrement: true, nullable: false } },
+            { name: 'embedding', type: 'vector', options: { length: 3, nullable: false } },
+          ],
+          primaryKey: 'docId',
+          indexes: [{ type: 'VECTOR', columns: ['embedding'] }],
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('VECTOR INDEX');
+      });
+    });
+
+    describe('orderByVector in getData()', () => {
+      it('should generate ORDER BY with vector distance expression', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[{ id: 1 }], []] as any)
+          .mockResolvedValueOnce([[{ count: 1 }], []] as any);
+
+        await mysqlOrm.getData({
+          table: 'documents',
+          idField: 'docId',
+          fields: { id: 'docId' },
+          orderByVector: {
+            column: 'embedding',
+            queryVector: [0.1, 0.2],
+            metric: 'cosine',
+          },
+          limit: 5,
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('ORDER BY VEC_DISTANCE_COSINE');
+      });
+
+      it('should respect direction in orderByVector', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        await mysqlOrm.getData({
+          table: 'documents',
+          idField: 'docId',
+          fields: { id: 'docId' },
+          orderByVector: {
+            column: 'embedding',
+            queryVector: [0.1, 0.2],
+            direction: 'DESC',
+          },
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('ORDER BY VEC_DISTANCE_COSINE');
+        expect(query).toContain('DESC');
+      });
+
+      it('should prefer orderByVector over orderBy when both are set', async () => {
+        const mysql = await import('mysql2/promise');
+        const pool = mysql.default.createPool({} as any);
+
+        vi.mocked(pool.query)
+          .mockResolvedValueOnce([[], []] as any)
+          .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+        await mysqlOrm.getData({
+          table: 'documents',
+          idField: 'docId',
+          fields: { id: 'docId', name: 'docName' },
+          orderBy: 'name',
+          orderByVector: {
+            column: 'embedding',
+            queryVector: [0.1, 0.2],
+          },
+        });
+
+        const [query] = vi.mocked(pool.query).mock.calls[0] as unknown as [string, ...any[]];
+        expect(query).toContain('ORDER BY VEC_DISTANCE_COSINE');
+        expect(query).not.toContain('ORDER BY `docName`');
+      });
+    });
+  });
 });
