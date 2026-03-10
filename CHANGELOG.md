@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-03-10
+
+### Added
+- **Vector Semantic Search**: K-nearest-neighbour similarity queries using MySQL vector columns
+  - New `vectorSearch()` method for similarity-based lookups
+  - `orderByVector` option in `getData()` for vector-ordered results
+  - `VECTOR(n)` column type and `VECTOR` index support in `createTable()`
+  - `vectorToString()` and `stringToVector()` static utility methods
+  - New types: `VectorDistanceMetric`, `VectorSearchConfig`, `VectorSearchResult`
+  - 24 new tests covering all vector search functionality (130 tests total)
+
+## [2.0.0] - 2026-02-15
+
+### Added
+- **Enhanced SQL Injection Prevention**: Strengthened validation across all query inputs
+
+### Changed
+- **BREAKING**: `batchInsertData()` now returns `{ firstInsertId, affectedRows }` instead of an array of IDs
+
+### Fixed
+- Improved query logging reliability
+- TINYINT cast handling
+
 ## [1.5.0] - 2026-01-04
 
 ### Added
