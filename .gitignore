@@ -122,3 +122,6 @@ temp/
 
 # Test artifacts
 test-results/
+
+# Local publish script (uses personal npm token)
+publish.js
