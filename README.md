@@ -6,6 +6,62 @@
 
 A type-safe MySQL ORM for Node.js applications. It provides query building, transaction support, and logging to help you work with MySQL databases using TypeScript.
 
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+  - [Basic Setup](#basic-setup)
+  - [Environment Variables](#environment-variables)
+- [Usage Examples](#usage-examples)
+  - [Basic Queries](#basic-queries)
+  - [Advanced Query Building](#advanced-query-building)
+  - [WHERE Clause Operators and Filtering](#where-clause-operators-and-filtering)
+  - [Field Alias Support](#field-alias-support)
+  - [DISTINCT Support](#distinct-support)
+  - [whereNotIn Support](#wherenotin-support)
+  - [Enhanced HAVING Clause](#enhanced-having-clause)
+  - [Explicit Raw SQL in Fields](#explicit-raw-sql-in-fields)
+  - [Batch Insert](#batch-insert)
+  - [Multiple ORDER BY Directions](#multiple-order-by-directions)
+  - [Enhanced Security](#enhanced-security)
+  - [JSON SQL Functions](#json-sql-functions)
+  - [Subqueries](#subqueries)
+  - [Type-Safe Queries with TypeScript](#type-safe-queries-with-typescript)
+  - [Database Entity Mapping](#database-entity-mapping)
+  - [Type-Safe CRUD Operations](#type-safe-crud-operations)
+  - [Raw SQL Queries](#raw-sql-queries)
+- [Transaction Management](#transaction-management)
+  - [Using withTransaction (Recommended)](#using-withtransaction-recommended)
+  - [Manual Transaction Control](#manual-transaction-control)
+- [Schema Management](#schema-management)
+  - [Creating Tables](#creating-tables)
+- [Query Logging and Monitoring](#query-logging-and-monitoring)
+  - [Log Output Examples](#log-output-examples)
+- [Configuration Options](#configuration-options)
+  - [MySQL ORM Configuration](#mysql-orm-configuration)
+  - [Query Logger Configuration](#query-logger-configuration)
+- [Security Features](#security-features)
+  - [SQL Injection Prevention](#sql-injection-prevention)
+  - [Input Validation](#input-validation)
+- [Testing](#testing)
+  - [Example Test](#example-test)
+- [Performance Tips](#performance-tips)
+- [Vector Semantic Search](#vector-semantic-search)
+  - [Creating a Table with a Vector Column](#creating-a-table-with-a-vector-column)
+  - [Running a Vector Search](#running-a-vector-search)
+  - [Filtering with WHERE](#filtering-with-where)
+  - [Vector Ordering in getData()](#vector-ordering-in-getdata)
+  - [Utility Methods](#utility-methods)
+  - [Distance Metrics](#distance-metrics)
+- [Migration from Other ORMs](#migration-from-other-orms)
+  - [From Sequelize](#from-sequelize)
+  - [From TypeORM](#from-typeorm)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
+- [Acknowledgments](#acknowledgments)
+
 ## Features
 
 - Type-safe queries with TypeScript support
@@ -1400,11 +1456,6 @@ const tableConfig: CreateTableConfig = {
 };
 
 await orm.createTable(tableConfig);
-```
-
-## Schema Management
-
-Atlas MySQL provides comprehensive table creation and management:
 ```
 
 ## Query Logging and Monitoring
