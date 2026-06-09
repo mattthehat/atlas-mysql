@@ -33,14 +33,17 @@ jobs:
 
       - run: npm run clean && npm run build
 
-      # No NODE_AUTH_TOKEN: auth is handled by the OIDC trusted publisher
-      # configured for this package (mattthehat/atlas-mysql -> publish.yml).
-      - name: Publish (diagnostic)
+      # Capture the REAL registry 403 body that npm hides, by replicating the
+      # OIDC exchange + PUT with curl.
+      - name: Diagnose publish 403 body
         run: |
-          echo "npm: $(npm --version)"
-          echo "OIDC request url present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
-          npm publish --provenance --access public --loglevel verbose || {
-            echo "==================== npm debug log ===================="
-            cat /home/runner/.npm/_logs/*-debug-0.log || true
-            exit 1
-          }
+          IDTOKEN=$(curl -s -H "authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value)
+          echo "id token: ${IDTOKEN:+ok}"
+          NPMTOKEN=$(curl -s -X POST -H "authorization: Bearer $IDTOKEN" \
+            https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/atlas-mysql | jq -r .token)
+          echo "npm oidc token: ${NPMTOKEN:+ok}"
+          echo "==== real PUT response body ===="
+          curl -s -X PUT -H "authorization: Bearer $NPMTOKEN" -H 'content-type: application/json' \
+            https://registry.npmjs.org/atlas-mysql --data '{"_id":"atlas-mysql","name":"atlas-mysql"}'
+          echo
