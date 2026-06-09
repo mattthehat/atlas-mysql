@@ -21,12 +21,15 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      # Ensure npm supports OIDC trusted publishing (>= 11.5.1)
+      - run: npm install -g npm@latest
+
       - run: npm ci
 
       - run: npm run test:ci
 
       - run: npm run clean && npm run build
 
+      # No NODE_AUTH_TOKEN: auth is handled by the OIDC trusted publisher
+      # configured for this package (mattthehat/atlas-mysql -> publish.yml).
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
