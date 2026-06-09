@@ -186,9 +186,12 @@ export class QueryLogger {
 
     const level = levelColor(`[${entry.level.toUpperCase()}]`);
     const query = chalk.cyan(entry.query);
-    const values = this.config.logValues && entry.values
-      ? chalk.gray(`| Values: ${JSON.stringify(entry.values)}`)
-      : entry.values ? chalk.gray(`| Values: [${entry.values.length} parameters redacted]`) : '';
+    const values =
+      this.config.logValues && entry.values
+        ? chalk.gray(`| Values: ${JSON.stringify(entry.values)}`)
+        : entry.values
+          ? chalk.gray(`| Values: [${entry.values.length} parameters redacted]`)
+          : '';
 
     console.log(`${timestamp} ${level} ${duration} ${query} ${values}`);
 

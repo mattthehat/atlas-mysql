@@ -66,6 +66,9 @@ A type-safe MySQL ORM for Node.js applications. It provides query building, tran
 
 - Type-safe queries with TypeScript support
 - Flexible query builder with method chaining
+- **NEW in v3.0.0**: Generic-aware field aliases — `getData<T>()` / `getFirst<T>()` constrain `fields` keys to `keyof T`, so a typo'd or unknown alias is a compile error
+- **NEW in v3.0.0**: Accurate row counts — `COUNT(*)` (NULL-safe) and proper group counting for `groupBy` queries
+- **NEW in v3.0.0**: Performance — SQL-validation patterns compiled once at module load instead of per clause
 - **NEW in v2.1.0**: Native vector/embedding semantic search (`vectorSearch()`) with cosine and L2 metrics
 - **NEW in v2.1.0**: `orderByVector` in `getData()` for KNN similarity ordering
 - **NEW in v2.1.0**: `VECTOR(n)` column type and `VECTOR` index support in `createTable()`
@@ -989,7 +992,26 @@ When using subqueries:
 
 ### Type-Safe Queries with TypeScript
 
-Atlas MySQL provides TypeScript support with type inference for your database operations:
+Atlas MySQL provides TypeScript support with type inference for your database operations.
+
+> **New in v3.0.0 — alias keys are checked against your row type.** When you pass a
+> generic to `QueryConfig<T>` (or call `getData<T>()` / `getFirst<T>()`), the keys of
+> `fields` are constrained to `keyof T`. A typo'd or unknown alias is now a **compile
+> error** instead of a silent runtime mismatch:
+>
+> ```typescript
+> const q: QueryConfig<User> = {
+>   table: 'users',
+>   idField: 'user_id',
+>   fields: {
+>     id: 'user_id',
+>     naem: 'full_name', // ❌ TS error: 'naem' is not a key of User
+>   },
+> };
+> ```
+>
+> Without a generic, `T` defaults to `Record<string, any>` and any string key is
+> allowed, so existing untyped queries keep working unchanged.
 
 ```typescript
 import { MySQLORM, QueryConfig } from 'atlas-mysql';
@@ -1023,8 +1045,9 @@ interface SalesReport {
 
 const orm = new MySQLORM(config);
 
-// Type-safe user query with proper return types
-const userQuery: QueryConfig = {
+// Type-safe user query with proper return types.
+// QueryConfig<User> constrains the `fields` keys (id, name, email, ...) to keyof User.
+const userQuery: QueryConfig<User> = {
   table: 'users',
   idField: 'user_id',
   fields: {
@@ -1060,7 +1083,7 @@ if (user) {
 }
 
 // Complex typed query for sales reports
-const salesQuery: QueryConfig = {
+const salesQuery: QueryConfig<SalesReport> = {
   table: 'orders',
   idField: 'order_id',
   fields: {

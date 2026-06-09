@@ -35,18 +35,23 @@ export type OrderByConfig =
 /**
  * Query configuration interface for building dynamic SQL queries
  */
-export type QueryConfig = {
-  /** Field mappings from query alias to database column */
-  fields: {
-    [key: string]: FieldValue;
-  };
+export type QueryConfig<T extends Record<string, any> = Record<string, any>> = {
+  /**
+   * Field mappings from query alias (the key) to a database column/expression.
+   *
+   * When a row type `T` is supplied (e.g. `getData<User>(...)`), the alias keys are
+   * constrained to `keyof T`: a typo'd or unknown alias becomes a compile error, so
+   * the selected columns always line up with the shape you claim to return.
+   * With no generic, `T` defaults to `Record<string, any>` and any string key is allowed.
+   */
+  fields: { [K in keyof T]?: FieldValue };
   /** Primary identifier field name */
   idField: string;
   /** Table name(s) to query from */
   table: Array<string> | string;
   /** JOIN clauses configuration */
   joins?: Array<{
-    type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL';
+    type: 'INNER' | 'LEFT' | 'RIGHT';
     table: string;
     on: string;
   }>;
@@ -114,7 +119,7 @@ export type VectorSearchConfig = {
   where?: string[];
   /** Optional JOIN clauses */
   joins?: Array<{
-    type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL';
+    type: 'INNER' | 'LEFT' | 'RIGHT';
     table: string;
     on: string;
   }>;
@@ -271,6 +276,58 @@ export interface JsonObject {
 }
 
 /**
+ * Core dangerous SQL patterns (DDL/DML, comments, multi-statement, time-based probes).
+ * Hoisted to module scope so they are compiled once, not re-allocated per clause.
+ * NOTE: these are intentionally NOT global (`/g`) — a shared global regex is stateful
+ * under `.test()` (advancing `lastIndex`) and would intermittently miss matches.
+ */
+const CORE_SQL_PATTERNS: readonly RegExp[] = [
+  /;/, // Multiple statements
+  /--/, // SQL comments
+  /\/\*/, // Block comments
+  /#/, // MySQL line comments
+  /\bUNION\b/i,
+  /\bDROP\b/i,
+  /\bDELETE\b/i,
+  /\bINSERT\b/i,
+  /\bUPDATE\b/i,
+  /\bEXEC\b/i,
+  /\bEXECUTE\b/i,
+  /\bSLEEP\s*\(/i,
+  /\bBENCHMARK\s*\(/i,
+  /\bLOAD_FILE\s*\(/i,
+  /\bINTO\s+OUTFILE\b/i,
+  /\bINTO\s+DUMPFILE\b/i,
+  /\bALTER\b/i,
+  /\bCREATE\b/i,
+  /\bTRUNCATE\b/i,
+  /\bGRANT\b/i,
+  /\bREVOKE\b/i,
+  /\bSHOW\b/i,
+  /\bDESCRIBE\b/i,
+  /\bSET\b/i,
+  /\bCALL\b/i,
+  /\bPREPARE\b/i,
+  /\bDEALLOCATE\b/i,
+  /\bHANDLER\b/i,
+  /\bLOAD\b/i,
+];
+
+/**
+ * Extra patterns for user-input-facing clauses (WHERE, HAVING, JOIN ON).
+ * These block encoding tricks that could bypass the core patterns.
+ */
+const STRICT_SQL_PATTERNS: readonly RegExp[] = [
+  /0x[0-9a-fA-F]+/i, // Hex-encoded values
+  /\\x[0-9a-fA-F]{2}/i, // Hex escape sequences
+  /CHAR\s*\(/i, // CHAR() used to build strings from codes
+  /CONCAT\s*\(/i, // CONCAT used to evade pattern matching
+  /CONCAT_WS\s*\(/i,
+  /UNHEX\s*\(/i, // UNHEX to decode hex strings
+  /CONV\s*\(/i, // CONV for base conversion tricks
+];
+
+/**
  * MySQL ORM class providing database operations and query building
  */
 export class MySQLORM {
@@ -353,9 +410,10 @@ export class MySQLORM {
    * @returns Resolved column name
    */
   private resolveOrderByColumn(column: string, config: QueryConfig): string {
-    // Remove ASC/DESC if included
-    const cleanColumn = column.replace(/\s+(ASC|DESC)$/i, '').trim();
-    const direction = column.match(/\s+(ASC|DESC)$/i)?.[1] || '';
+    // Split a trailing ASC/DESC from the column in a single pass
+    const match = column.match(/^(.*?)\s+(ASC|DESC)$/i);
+    const cleanColumn = (match ? match[1]! : column).trim();
+    const direction = match ? match[2]! : '';
 
     const resolvedColumn = this.resolveColumnName(cleanColumn, config);
     return direction ? `${resolvedColumn} ${direction}` : resolvedColumn;
@@ -368,52 +426,7 @@ export class MySQLORM {
    * @throws Error if clause appears to contain dangerous patterns
    */
   private validateSqlClause(clause: string, context: string): void {
-    // Core dangerous patterns: DDL/DML statements, comments, multi-statement
-    const corePatterns = [
-      /;/g, // Multiple statements
-      /--/g, // SQL comments
-      /\/\*/g, // Block comments
-      /#/g, // MySQL line comments
-      /\bUNION\b/i,
-      /\bDROP\b/i,
-      /\bDELETE\b/i,
-      /\bINSERT\b/i,
-      /\bUPDATE\b/i,
-      /\bEXEC\b/i,
-      /\bEXECUTE\b/i,
-      /\bSLEEP\s*\(/i,
-      /\bBENCHMARK\s*\(/i,
-      /\bLOAD_FILE\s*\(/i,
-      /\bINTO\s+OUTFILE\b/i,
-      /\bINTO\s+DUMPFILE\b/i,
-      /\bALTER\b/i,
-      /\bCREATE\b/i,
-      /\bTRUNCATE\b/i,
-      /\bGRANT\b/i,
-      /\bREVOKE\b/i,
-      /\bSHOW\b/i,
-      /\bDESCRIBE\b/i,
-      /\bSET\b/i,
-      /\bCALL\b/i,
-      /\bPREPARE\b/i,
-      /\bDEALLOCATE\b/i,
-      /\bHANDLER\b/i,
-      /\bLOAD\b/i,
-    ];
-
-    // Extra patterns for user-input-facing clauses (WHERE, HAVING, JOIN ON)
-    // These block encoding tricks that could bypass the core patterns
-    const strictPatterns = [
-      /0x[0-9a-fA-F]+/i, // Hex-encoded values
-      /\\x[0-9a-fA-F]{2}/i, // Hex escape sequences
-      /CHAR\s*\(/i, // CHAR() used to build strings from codes
-      /CONCAT\s*\(/i, // CONCAT used to evade pattern matching
-      /CONCAT_WS\s*\(/i,
-      /UNHEX\s*\(/i, // UNHEX to decode hex strings
-      /CONV\s*\(/i, // CONV for base conversion tricks
-    ];
-
-    for (const pattern of corePatterns) {
+    for (const pattern of CORE_SQL_PATTERNS) {
       if (pattern.test(clause)) {
         throw new Error(`Invalid ${context}: potentially dangerous pattern detected.`);
       }
@@ -421,7 +434,7 @@ export class MySQLORM {
 
     // Apply strict patterns only for non-raw-SQL contexts
     if (context !== 'raw SQL field' && context !== 'field expression') {
-      for (const pattern of strictPatterns) {
+      for (const pattern of STRICT_SQL_PATTERNS) {
         if (pattern.test(clause)) {
           throw new Error(`Invalid ${context}: potentially dangerous pattern detected.`);
         }
@@ -451,7 +464,7 @@ export class MySQLORM {
    * @returns Generated SQL query string and parameter values for whereIn/having
    */
   private buildQuery(
-    config: QueryConfig,
+    config: QueryConfig<any>,
     isCount = false
   ): { query: string; additionalValues: Array<string | number | boolean | null> } {
     const {
@@ -475,13 +488,30 @@ export class MySQLORM {
     let query = '';
     const additionalValues: Array<string | number | boolean | null> = [];
 
+    const fromClause = Array.isArray(table)
+      ? table.map((t) => escapeId(t)).join(', ')
+      : escapeId(table);
+
+    // Counting a grouped query means counting the number of GROUPS, not summing
+    // per-group counts. Wrap the row query (sans ORDER BY / LIMIT / OFFSET) as a
+    // derived table and count its rows.
+    if (isCount && groupBy) {
+      // Omit ORDER BY / LIMIT / OFFSET — they're meaningless inside the COUNT subquery.
+      const { limit: _l, offset: _o, orderBy: _ob, orderByVector: _ov, ...innerConfig } = config;
+      const inner = this.buildQuery(innerConfig, false);
+      const wrapped = `SELECT COUNT(*) AS count FROM (${inner.query}) AS __count_sub`;
+      if (this.isDev) {
+        console.log(chalk.blue('Generated Query:'), chalk.magentaBright(wrapped));
+      }
+      return { query: wrapped, additionalValues: inner.additionalValues };
+    }
+
     if (isCount) {
-      const distinctKeyword = distinct ? 'DISTINCT ' : '';
-      query += `SELECT COUNT(${distinctKeyword}${escapeId(idField)}) AS count FROM ${
-        Array.isArray(table) ? table.map((t) => escapeId(t)).join(', ') : escapeId(table)
-      }`;
+      // COUNT(*) counts rows including NULL idField; COUNT(DISTINCT id) honours DISTINCT.
+      const countExpr = distinct ? `COUNT(DISTINCT ${escapeId(idField)})` : 'COUNT(*)';
+      query += `SELECT ${countExpr} AS count FROM ${fromClause}`;
     } else {
-      query += distinct ? 'SELECT DISTINCT ' : 'SELECT ';
+      const selectParts: string[] = [];
 
       for (const key in fields) {
         const fieldValue = fields[key];
@@ -489,8 +519,11 @@ export class MySQLORM {
         if (this.isObject(fieldValue) && !('raw' in fieldValue)) {
           // Handle subquery
           const subQueryResult = this.buildQuery(fieldValue as QueryConfig, false);
-          query += `(${subQueryResult.query}) AS ${escapeId(key)}, `;
-          // Note: subquery values are handled within the subquery itself
+          selectParts.push(`(${subQueryResult.query}) AS ${escapeId(key)}`);
+          // Propagate the subquery's bound values (e.g. from whereIn/whereNotIn).
+          // The SELECT clause precedes WHERE textually, and this loop runs before the
+          // WHERE processing below, so pushing here keeps placeholders and values aligned.
+          additionalValues.push(...subQueryResult.additionalValues);
         } else if (
           typeof fieldValue === 'object' &&
           fieldValue !== null &&
@@ -499,26 +532,23 @@ export class MySQLORM {
         ) {
           // Handle explicit raw SQL marker - validate for injection
           this.validateSqlClause(fieldValue.raw, 'raw SQL field');
-          query += `${fieldValue.raw} AS ${escapeId(key)}, `;
+          selectParts.push(`${fieldValue.raw} AS ${escapeId(key)}`);
         } else if (typeof fieldValue === 'string') {
           // Check if the field value contains SQL functions or is already escaped
           if (fieldValue.includes('(') || fieldValue.includes('`') || fieldValue.includes("'")) {
             this.validateSqlClause(fieldValue, 'field expression');
-            query += `${fieldValue} AS ${escapeId(key)}, `;
+            selectParts.push(`${fieldValue} AS ${escapeId(key)}`);
           } else {
-            query += `${escapeId(fieldValue)} AS ${escapeId(key)}, `;
+            selectParts.push(`${escapeId(fieldValue)} AS ${escapeId(key)}`);
           }
         } else {
-          query += `${escapeId(String(fieldValue))} AS ${escapeId(key)}, `;
+          selectParts.push(`${escapeId(String(fieldValue))} AS ${escapeId(key)}`);
         }
       }
 
-      // Remove the last comma and space
-      query = query.slice(0, -2);
-
-      query += ` FROM ${
-        Array.isArray(table) ? table.map((t) => escapeId(t)).join(', ') : escapeId(table)
-      }`;
+      query += distinct ? 'SELECT DISTINCT ' : 'SELECT ';
+      query += selectParts.join(', ');
+      query += ` FROM ${fromClause}`;
     }
 
     if (joins) {
@@ -676,7 +706,7 @@ export class MySQLORM {
    * @returns Promise resolving to rows and total count
    */
   public async getData<T extends Record<string, any>>(
-    query: QueryConfig,
+    query: QueryConfig<T>,
     values: Array<string | number | boolean | null> = [],
     options?: { skipCount?: boolean }
   ): Promise<{ rows: T[]; count: number }> {
@@ -743,7 +773,7 @@ export class MySQLORM {
    * @returns Promise resolving to first matching record or null
    */
   public async getFirst<T extends Record<string, any>>(
-    query: QueryConfig,
+    query: QueryConfig<T>,
     values: Array<string | number | boolean | null> = []
   ): Promise<T | null> {
     const queryLogger = getQueryLogger();

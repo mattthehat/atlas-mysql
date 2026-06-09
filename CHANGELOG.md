@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-06-09
+
+### Added
+- **Generic-aware field aliases**: `QueryConfig<T>` constrains the keys of `fields` to `keyof T`.
+  When a row type is supplied via `getData<T>()` / `getFirst<T>()` (or by typing the config as
+  `QueryConfig<T>`), a typo'd or unknown alias becomes a **compile-time error** instead of a silent
+  runtime mismatch. With no generic, `T` defaults to `Record<string, any>` and any string key is
+  allowed, so untyped queries are unaffected.
+
+### Changed
+- **BREAKING (types)**: `QueryConfig` is now generic (`QueryConfig<T = Record<string, any>>`).
+  Existing typed callers (`getData<User>(...)`) whose `fields` contained a key not present on the
+  row type will now fail to compile. Untyped usage and runtime behaviour are unchanged.
+- **BREAKING (types)**: Removed `'FULL'` from the `joins[].type` union (in both `QueryConfig` and
+  `VectorSearchConfig`). MySQL does not support `FULL JOIN`, so this only ever failed at runtime.
+- **BREAKING (behaviour)**: Row counts are now accurate for grouped and nullable-id queries —
+  see Fixed. Code relying on the previous (incorrect) count values will observe different numbers.
+
+### Fixed
+- **Count accuracy**: `getData()` now uses `COUNT(*)` (NULL-safe) instead of `COUNT(idField)`, and
+  `COUNT(DISTINCT idField)` when `distinct` is set. Queries with `groupBy` now count the number of
+  groups (via a wrapped derived table) instead of returning the first group's tally.
+- **Subquery parameters**: bound values from a SELECT subquery's `whereIn` / `whereNotIn` are now
+  propagated to the outer query, fixing placeholder/value count mismatches.
+- **SQL-validation regex statefulness**: hoisted validation patterns no longer use the `/g` flag,
+  removing a latent `lastIndex` bug that could intermittently skip matches.
+
+### Performance
+- SQL-injection validation patterns are compiled once at module load instead of being re-allocated
+  (~37 `RegExp` objects) on every clause validation.
+- `SELECT` column lists are assembled with array `join` instead of repeated string concatenation,
+  and `ORDER BY` direction parsing uses a single regex pass.
+
+### Internal
+- Fixed the ESLint config (`plugin:@typescript-eslint/recommended`) so linting runs again; pinned
+  `types: ["node"]` in `tsconfig.json`; updated in-range dependencies (including `mysql2` 3.22.5).
+
 ## [2.1.0] - 2026-03-10
 
 ### Added
