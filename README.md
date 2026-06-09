@@ -4,7 +4,9 @@
 [![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A type-safe MySQL ORM for Node.js applications. It provides query building, transaction support, and logging to help you work with MySQL databases using TypeScript.
+A type-safe **query builder** for MySQL on Node.js. It gives you composable, parameterised query building, transactions, schema/DDL helpers, vector search, and query logging — without the heavyweight machinery of a full ORM.
+
+> **What it is (and isn't).** Atlas MySQL is a typed query builder, not a full ORM: there are no entity decorators, relations, lazy/eager loading, or migrations. That's deliberate — you write explicit, predictable SQL with type-checked aliases and parameter binding. Generic result types like `getData<User>()` describe the shape you expect; they are a **compile-time convenience, not a runtime guarantee** — rows are returned as-is from MySQL and cast to your type without validation.
 
 ## Table of Contents
 
@@ -66,6 +68,8 @@ A type-safe MySQL ORM for Node.js applications. It provides query building, tran
 
 - Type-safe queries with TypeScript support
 - Flexible query builder with method chaining
+- **NEW in v3.1.0**: Structured `where` conditions (`{ column, op, value }`) — fully parameterised and injection-safe, no raw SQL strings required
+- **NEW in v3.1.0**: Pluggable logging via an injectable console sink; `chalk` is no longer a runtime dependency (zero runtime deps beyond `mysql2`)
 - **NEW in v3.0.0**: Generic-aware field aliases — `getData<T>()` / `getFirst<T>()` constrain `fields` keys to `keyof T`, so a typo'd or unknown alias is a compile error
 - **NEW in v3.0.0**: Accurate row counts — `COUNT(*)` (NULL-safe) and proper group counting for `groupBy` queries
 - **NEW in v3.0.0**: Performance — SQL-validation patterns compiled once at module load instead of per clause
@@ -266,9 +270,33 @@ const salesQuery: QueryConfig = {
 const salesData = await orm.getData(salesQuery, ['completed', '2023-01-01']);
 ```
 
-### WHERE Clause Operators and Filtering
+### Structured WHERE conditions (recommended)
 
-Atlas MySQL supports all standard SQL comparison operators in WHERE clauses:
+Since v3.1.0 you can express conditions as structured objects instead of raw SQL strings. The column is alias-resolved and escaped, the operator is validated against a fixed allow-list, and every value is bound as a `?` placeholder — so there is **no raw SQL to validate and no injection surface**. You also don't need to pass a separate `values` array for these.
+
+```typescript
+const { rows } = await orm.getData({
+  table: 'products',
+  idField: 'product_id',
+  fields: { id: 'product_id', name: 'product_name', price: 'price', active: 'is_active' },
+  where: [
+    { column: 'active', op: '=', value: true },
+    { column: 'price', op: '>=', value: 10 },
+    { column: 'price', op: 'BETWEEN', value: [10, 100] }, // [low, high] tuple
+    { column: 'id', op: 'IN', value: [1, 2, 3] },          // array → (?, ?, ?)
+    { column: 'name', op: 'LIKE', value: 'Widget%' },
+    { column: 'name', op: 'IS NOT NULL' },                 // no `value`
+  ],
+});
+```
+
+Supported operators: `=`, `!=`, `<>`, `<`, `>`, `<=`, `>=`, `<=>`, `LIKE`, `NOT LIKE`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`, `BETWEEN`, `NOT BETWEEN`. An empty `IN`/`NOT IN` array is handled safely (matches no/all rows rather than producing invalid SQL).
+
+You can mix structured and raw-string entries in the same `where` array, but a structured condition is the safer default. **Tip:** if you mix raw `?` strings with structured conditions, the raw-string values (passed via the `values` argument) bind first; prefer all-structured conditions to avoid having to reason about ordering.
+
+### WHERE Clause Operators (raw strings)
+
+Atlas MySQL also accepts raw SQL strings in WHERE clauses. These are validated against dangerous patterns and have their leading alias resolved, with values supplied via the `values` argument. Prefer [structured conditions](#structured-where-conditions-recommended) for user-facing filters:
 
 ```typescript
 // Using different comparison operators
@@ -1555,33 +1583,40 @@ interface QueryLoggerConfig {
 
 ### SQL Injection Prevention
 
-Atlas MySQL uses parameterised queries throughout:
+Atlas MySQL's primary defence is **parameter binding and identifier escaping**, not string filtering. Values always become `?` placeholders bound by `mysql2`; identifiers go through `escapeId`.
 
 ```typescript
-// ✅ Safe - uses parameterised queries
+// ✅ Safest — structured conditions: nothing user-supplied is concatenated into SQL
 const users = await orm.getData({
   table: 'users',
   idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name', status: 'status' },
+  where: [
+    { column: 'email', op: '=', value: userEmail },
+    { column: 'status', op: '=', value: 'active' },
+  ],
+});
+
+// ✅ Safe — parameterised raw strings (values bound via the values argument)
+const u = await orm.getData({
+  table: 'users', idField: 'user_id',
   fields: { id: 'user_id', name: 'full_name' },
   where: ['email = ?', 'status = ?'],
 }, [userEmail, 'active']);
 
-// ✅ Safe - automatic escaping
-const userId = await orm.insertData('users', {
-  email: userInput.email,
-  name: userInput.name,
-});
+// ✅ Safe — automatic escaping on writes
+await orm.insertData('users', { email: userInput.email, name: userInput.name });
 ```
+
+**On the raw-string `where`/`having`/`join.on` path:** because those accept SQL fragments, the builder additionally runs a best-effort pattern check (`validateSqlClause`) to reject obviously dangerous input. Treat this as **defence-in-depth, not a primary control** — denylists can have false positives and are not a substitute for never concatenating untrusted input. For any user-facing filter, prefer [structured conditions](#structured-where-conditions-recommended), which remove the raw-SQL surface entirely.
 
 ### Input Validation
 
-```typescript
-// The ORM automatically validates and sanitizes:
-// - Numeric limits and offsets
-// - Table and column names (using escapeId)
-// - Parameter values (using parameterised queries)
-// - SQL injection attempts
-```
+The builder also validates/escapes:
+- Numeric `limit`/`offset` (floored, clamped to safe ranges)
+- Table and column identifiers (via `escapeId`)
+- DDL identifiers like charset/collation/engine (alphanumeric allow-list)
+- Vector inputs (finite-number checks)
 
 ## Testing
 

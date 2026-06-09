@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import chalk from 'chalk';
+import { colors } from './colors';
 
 /**
  * Log level enumeration
@@ -40,6 +40,12 @@ export type QueryLoggerConfig = {
   rotateOnSize: boolean;
   /** Log parameter values (disable to prevent sensitive data in logs) */
   logValues: boolean;
+  /**
+   * Injectable console sink (defaults to the global `console`). Provide your own
+   * `{ log, error }` to route console output to a custom logger — the logger makes
+   * no assumptions about where lines go.
+   */
+  logger?: Pick<Console, 'log' | 'error'>;
 };
 
 /**
@@ -62,6 +68,11 @@ const defaultConfig: QueryLoggerConfig = {
 export class QueryLogger {
   private config: QueryLoggerConfig;
   private logStream: fs.WriteStream | null = null;
+
+  /** Resolved console sink — the injected logger if present, otherwise global console. */
+  private get out(): Pick<Console, 'log' | 'error'> {
+    return this.config.logger ?? console;
+  }
 
   /**
    * Create a new QueryLogger instance
@@ -101,7 +112,7 @@ export class QueryLogger {
 
     // Handle stream errors
     this.logStream.on('error', (error) => {
-      console.error('[Query Logger] Stream error:', error);
+      this.out.error('[Query Logger] Stream error:', error);
     });
   }
 
@@ -114,9 +125,9 @@ export class QueryLogger {
 
     try {
       fs.renameSync(this.config.logFilePath, archivePath);
-      console.log(chalk.yellow(`[Query Logger] Rotated log file to: ${archivePath}`));
+      this.out.log(colors.yellow(`[Query Logger] Rotated log file to: ${archivePath}`));
     } catch (error) {
-      console.error('[Query Logger] Failed to rotate log file:', error);
+      this.out.error('[Query Logger] Failed to rotate log file:', error);
     }
   }
 
@@ -173,34 +184,34 @@ export class QueryLogger {
       return;
     }
 
-    const timestamp = chalk.gray(entry.timestamp);
+    const timestamp = colors.gray(entry.timestamp);
     const duration = entry.duration
       ? entry.duration > this.config.slowQueryThreshold
-        ? chalk.red(`${entry.duration}ms`)
-        : chalk.green(`${entry.duration}ms`)
+        ? colors.red(`${entry.duration}ms`)
+        : colors.green(`${entry.duration}ms`)
       : '';
 
-    let levelColor = chalk.blue;
-    if (entry.level === 'error') levelColor = chalk.red;
-    if (entry.level === 'warn') levelColor = chalk.yellow;
+    let levelColor = colors.blue;
+    if (entry.level === 'error') levelColor = colors.red;
+    if (entry.level === 'warn') levelColor = colors.yellow;
 
     const level = levelColor(`[${entry.level.toUpperCase()}]`);
-    const query = chalk.cyan(entry.query);
+    const query = colors.cyan(entry.query);
     const values =
       this.config.logValues && entry.values
-        ? chalk.gray(`| Values: ${JSON.stringify(entry.values)}`)
+        ? colors.gray(`| Values: ${JSON.stringify(entry.values)}`)
         : entry.values
-          ? chalk.gray(`| Values: [${entry.values.length} parameters redacted]`)
+          ? colors.gray(`| Values: [${entry.values.length} parameters redacted]`)
           : '';
 
-    console.log(`${timestamp} ${level} ${duration} ${query} ${values}`);
+    this.out.log(`${timestamp} ${level} ${duration} ${query} ${values}`);
 
     if (entry.error) {
-      console.error(chalk.red(`Error: ${entry.error}`));
+      this.out.error(colors.red(`Error: ${entry.error}`));
     }
 
     if (entry.stackTrace) {
-      console.error(chalk.gray(entry.stackTrace));
+      this.out.error(colors.gray(entry.stackTrace));
     }
   }
 

@@ -2282,4 +2282,108 @@ describe('MySQL ORM', () => {
       });
     });
   });
+
+  describe('structured where conditions', () => {
+    const baseConfig: QueryConfig = {
+      table: 'users',
+      idField: 'userId',
+      fields: { id: 'userId', name: 'fullName', active: 'isActive' },
+    };
+
+    it('parameterises comparison operators and resolves aliases', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      await mysqlOrm.getData({
+        ...baseConfig,
+        where: [
+          { column: 'active', op: '=', value: true },
+          { column: 'name', op: 'LIKE', value: 'A%' },
+        ],
+      });
+
+      const [query, values] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('`isActive` = ?');
+      expect(query).toContain('`fullName` LIKE ?');
+      expect(values).toEqual([true, 'A%']);
+    });
+
+    it('expands IN/NOT IN and keeps value order', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      await mysqlOrm.getData({
+        ...baseConfig,
+        where: [
+          { column: 'id', op: 'IN', value: [1, 2, 3] },
+          { column: 'name', op: 'NOT IN', value: ['x'] },
+        ],
+      });
+
+      const [query, values] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('`userId` IN (?, ?, ?)');
+      expect(query).toContain('`fullName` NOT IN (?)');
+      expect(values).toEqual([1, 2, 3, 'x']);
+    });
+
+    it('handles IS NULL / BETWEEN and empty IN safely', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      await mysqlOrm.getData({
+        ...baseConfig,
+        where: [
+          { column: 'name', op: 'IS NOT NULL' },
+          { column: 'id', op: 'BETWEEN', value: [10, 20] },
+          { column: 'id', op: 'IN', value: [] },
+        ],
+      });
+
+      const [query, values] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('`fullName` IS NOT NULL');
+      expect(query).toContain('`userId` BETWEEN ? AND ?');
+      expect(query).toContain('1 = 0'); // empty IN matches no rows
+      expect(values).toEqual([10, 20]);
+    });
+
+    it('mixes raw string and structured conditions', async () => {
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      await mysqlOrm.getData(
+        {
+          ...baseConfig,
+          where: ['isActive = ?', { column: 'id', op: '>', value: 5 }],
+        },
+        [1]
+      );
+
+      const [query, values] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('isActive = ?');
+      expect(query).toContain('`userId` > ?');
+      // user value first (raw string), then structured condition value
+      expect(values).toEqual([1, 5]);
+    });
+
+    it('throws on a malformed BETWEEN tuple', async () => {
+      await expect(
+        mysqlOrm.getData({
+          ...baseConfig,
+          where: [{ column: 'id', op: 'BETWEEN', value: [1] as any }],
+        })
+      ).rejects.toThrow();
+    });
+  });
 });

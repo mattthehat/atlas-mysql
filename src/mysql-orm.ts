@@ -1,5 +1,5 @@
 import mysql, { type ResultSetHeader, escapeId, escape, type PoolConnection } from 'mysql2/promise';
-import chalk from 'chalk';
+import { colors } from './colors';
 import { getQueryLogger } from './query-logger';
 
 /**
@@ -33,6 +33,58 @@ export type OrderByConfig =
   | Array<{ column: string; direction?: 'ASC' | 'DESC' }>;
 
 /**
+ * Comparison operators supported by structured WHERE conditions.
+ */
+export type WhereOperator =
+  | '='
+  | '!='
+  | '<>'
+  | '<'
+  | '>'
+  | '<='
+  | '>='
+  | '<=>'
+  | 'LIKE'
+  | 'NOT LIKE'
+  | 'IN'
+  | 'NOT IN'
+  | 'IS NULL'
+  | 'IS NOT NULL'
+  | 'BETWEEN'
+  | 'NOT BETWEEN';
+
+/** A scalar value usable in a WHERE condition. */
+export type WhereScalar = string | number | boolean | null;
+
+/**
+ * A structured, fully-parameterised WHERE condition.
+ *
+ * Unlike raw `where` strings, structured conditions never concatenate user input
+ * into the SQL: the column is escaped (and alias-resolved), the operator is validated
+ * against a fixed allow-list, and every value is bound as a `?` placeholder. This is
+ * the injection-safe, recommended way to express conditions.
+ *
+ * - `IS NULL` / `IS NOT NULL` take no `value`.
+ * - `IN` / `NOT IN` take an array `value`.
+ * - `BETWEEN` / `NOT BETWEEN` take a `[low, high]` tuple `value`.
+ * - all other operators take a single scalar `value`.
+ */
+export type WhereCondition = {
+  /** Column name or alias (resolved against the `fields` map). */
+  column: string;
+  /** Comparison operator. */
+  op: WhereOperator;
+  /** Bound value(s); omitted for IS NULL / IS NOT NULL. */
+  value?: WhereScalar | WhereScalar[] | [WhereScalar, WhereScalar];
+};
+
+/**
+ * A WHERE entry: either a raw SQL string (validated, alias-resolved, values supplied
+ * via the `values` argument) or a structured, fully-parameterised condition.
+ */
+export type WhereEntry = string | WhereCondition;
+
+/**
  * Query configuration interface for building dynamic SQL queries
  */
 export type QueryConfig<T extends Record<string, any> = Record<string, any>> = {
@@ -55,8 +107,8 @@ export type QueryConfig<T extends Record<string, any> = Record<string, any>> = {
     table: string;
     on: string;
   }>;
-  /** WHERE clause conditions */
-  where?: Array<string>;
+  /** WHERE clause conditions — raw SQL strings and/or structured conditions (AND-joined) */
+  where?: Array<WhereEntry>;
   /** WHERE IN clause conditions */
   whereIn?: {
     [key: string]: Array<string | number | boolean | null>;
@@ -420,6 +472,74 @@ export class MySQLORM {
   }
 
   /**
+   * Build a fully-parameterised SQL fragment from a structured WHERE condition.
+   * The column is alias-resolved and escaped, the operator is validated against a
+   * fixed allow-list, and all values are returned as bind parameters — so no user
+   * input is ever concatenated into the SQL.
+   * @param condition Structured condition
+   * @param config Query configuration (for alias resolution)
+   * @returns The SQL clause and its ordered bind values
+   */
+  private buildWhereCondition(
+    condition: WhereCondition,
+    config: QueryConfig<any>
+  ): { clause: string; values: WhereScalar[] } {
+    const { column, op, value } = condition;
+    const col = escapeId(this.resolveColumnName(column, config));
+    const operator = op.toUpperCase() as WhereOperator;
+
+    switch (operator) {
+      case '=':
+      case '!=':
+      case '<>':
+      case '<':
+      case '>':
+      case '<=':
+      case '>=':
+      case '<=>':
+      case 'LIKE':
+      case 'NOT LIKE': {
+        if (Array.isArray(value)) {
+          throw new Error(`WHERE condition for "${column}" ${operator} expects a single value`);
+        }
+        return { clause: `${col} ${operator} ?`, values: [value as WhereScalar] };
+      }
+      case 'IN':
+      case 'NOT IN': {
+        if (!Array.isArray(value)) {
+          throw new Error(`WHERE condition for "${column}" ${operator} expects an array value`);
+        }
+        if (value.length === 0) {
+          // Empty IN () is invalid SQL; emit a constant that matches no/all rows.
+          return { clause: operator === 'IN' ? '1 = 0' : '1 = 1', values: [] };
+        }
+        return {
+          clause: `${col} ${operator} (${value.map(() => '?').join(', ')})`,
+          values: value as WhereScalar[],
+        };
+      }
+      case 'IS NULL':
+      case 'IS NOT NULL': {
+        return { clause: `${col} ${operator}`, values: [] };
+      }
+      case 'BETWEEN':
+      case 'NOT BETWEEN': {
+        if (!Array.isArray(value) || value.length !== 2) {
+          throw new Error(
+            `WHERE condition for "${column}" ${operator} expects a [low, high] tuple`
+          );
+        }
+        return {
+          clause: `${col} ${operator} ? AND ?`,
+          values: [value[0] as WhereScalar, value[1] as WhereScalar],
+        };
+      }
+      default:
+        throw new Error(`Unsupported WHERE operator: ${String(op)}`);
+    }
+  }
+
+  /**
    * Validate a SQL clause to prevent SQL injection
    * @param clause The SQL clause to validate
    * @param context Description of the clause type for error messages
@@ -501,7 +621,7 @@ export class MySQLORM {
       const inner = this.buildQuery(innerConfig, false);
       const wrapped = `SELECT COUNT(*) AS count FROM (${inner.query}) AS __count_sub`;
       if (this.isDev) {
-        console.log(chalk.blue('Generated Query:'), chalk.magentaBright(wrapped));
+        console.log(colors.blue('Generated Query:'), colors.magenta(wrapped));
       }
       return { query: wrapped, additionalValues: inner.additionalValues };
     }
@@ -562,12 +682,19 @@ export class MySQLORM {
     const whereClauses: string[] = [];
 
     if (where && where.length > 0) {
-      // Validate and resolve aliases in WHERE clauses
-      const resolvedWhere = where.map((clause) => {
-        this.validateSqlClause(clause, 'WHERE clause');
-        return this.resolveWhereClause(clause, config);
-      });
-      whereClauses.push(...resolvedWhere);
+      for (const entry of where) {
+        if (typeof entry === 'string') {
+          // Raw SQL string: validate for injection and resolve a leading alias.
+          // Values for any `?` placeholders are supplied via the `values` argument.
+          this.validateSqlClause(entry, 'WHERE clause');
+          whereClauses.push(this.resolveWhereClause(entry, config));
+        } else {
+          // Structured condition: fully parameterised, no raw SQL concatenation.
+          const built = this.buildWhereCondition(entry, config);
+          whereClauses.push(built.clause);
+          additionalValues.push(...built.values);
+        }
+      }
     }
 
     if (whereIn) {
@@ -693,7 +820,7 @@ export class MySQLORM {
     }
 
     if (this.isDev) {
-      console.log(chalk.blue('Generated Query:'), chalk.magentaBright(query));
+      console.log(colors.blue('Generated Query:'), colors.magenta(query));
     }
 
     return { query, additionalValues };
@@ -718,7 +845,7 @@ export class MySQLORM {
 
     try {
       if (this.isDev) {
-        console.log(chalk.cyan('Values:'), allValues);
+        console.log(colors.cyan('Values:'), allValues);
       }
 
       if (options?.skipCount) {
@@ -786,7 +913,7 @@ export class MySQLORM {
     const allValues = [...values, ...queryResult.additionalValues];
 
     if (this.isDev) {
-      console.log(chalk.cyan('Values:'), allValues);
+      console.log(colors.cyan('Values:'), allValues);
     }
 
     try {
@@ -833,8 +960,8 @@ export class MySQLORM {
       .join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`;
 
     if (this.isDev) {
-      console.log(chalk.blue('Insert Query:'), query);
-      console.log(chalk.cyan('Values:'), values);
+      console.log(colors.blue('Insert Query:'), query);
+      console.log(colors.cyan('Values:'), values);
     }
 
     try {
@@ -900,8 +1027,8 @@ export class MySQLORM {
       .join(', ')}) VALUES ${valuePlaceholders}`;
 
     if (this.isDev) {
-      console.log(chalk.blue('Batch Insert Query:'), query);
-      console.log(chalk.cyan('Value Count:'), allValues.length);
+      console.log(colors.blue('Batch Insert Query:'), query);
+      console.log(colors.cyan('Value Count:'), allValues.length);
     }
 
     try {
@@ -953,8 +1080,8 @@ export class MySQLORM {
     const allValues = [...setValues, ...(values || [])];
 
     if (this.isDev) {
-      console.log(chalk.blue('Update Query:'), query);
-      console.log(chalk.cyan('Values:'), allValues);
+      console.log(colors.blue('Update Query:'), query);
+      console.log(colors.cyan('Values:'), allValues);
     }
 
     try {
@@ -1001,8 +1128,8 @@ export class MySQLORM {
       .join(' AND ')}`;
 
     if (this.isDev) {
-      console.log(chalk.blue('Delete Query:'), query);
-      console.log(chalk.cyan('Values:'), whereValues);
+      console.log(colors.blue('Delete Query:'), query);
+      console.log(colors.cyan('Values:'), whereValues);
     }
 
     try {
@@ -1133,8 +1260,8 @@ export class MySQLORM {
     query += ` LIMIT ${safeK}`;
 
     if (this.isDev) {
-      console.log(chalk.blue('Vector Search Query:'), chalk.magentaBright(query));
-      console.log(chalk.cyan('Values:'), values);
+      console.log(colors.blue('Vector Search Query:'), colors.magenta(query));
+      console.log(colors.cyan('Values:'), values);
     }
 
     try {
@@ -1538,7 +1665,7 @@ export class Transaction {
     this.isActive = true;
 
     if (process.env.NODE_ENV === 'development') {
-      console.log(chalk.green('Transaction started'));
+      console.log(colors.green('Transaction started'));
     }
   }
 
@@ -1556,7 +1683,7 @@ export class Transaction {
     this.connection = null;
 
     if (process.env.NODE_ENV === 'development') {
-      console.log(chalk.green('Transaction committed'));
+      console.log(colors.green('Transaction committed'));
     }
   }
 
@@ -1574,7 +1701,7 @@ export class Transaction {
     this.connection = null;
 
     if (process.env.NODE_ENV === 'development') {
-      console.log(chalk.yellow('Transaction rolled back'));
+      console.log(colors.yellow('Transaction rolled back'));
     }
   }
 

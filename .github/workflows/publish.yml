@@ -1,5 +1,9 @@
 name: Publish to npm
 
+# Releases publish automatically when a `v*` tag is pushed, authenticated via the
+# OIDC trusted publisher configured for this package (mattthehat/atlas-mysql -> publish.yml).
+# No NPM_TOKEN secret is required.
+
 on:
   push:
     tags:
@@ -11,12 +15,12 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
+      id-token: write # required for OIDC trusted publishing
 
     steps:
       - uses: actions/checkout@v4
 
-      # NOTE: no `registry-url:` here on purpose. setup-node's registry-url writes an
+      # NOTE: deliberately no `registry-url:`. setup-node's registry-url writes an
       # .npmrc with a placeholder _authToken, which makes npm attempt (failing) token
       # auth instead of the OIDC trusted-publisher exchange. npmjs.org is the default
       # registry, so OIDC works without it.
@@ -24,7 +28,7 @@ jobs:
         with:
           node-version: '24'
 
-      # Ensure npm supports OIDC trusted publishing (>= 11.5.1)
+      # Ensure npm supports OIDC trusted publishing (>= 11.5.1).
       - run: npm install -g npm@latest
 
       - run: npm ci
@@ -33,16 +37,26 @@ jobs:
 
       - run: npm run clean && npm run build
 
-      # Manual publish via curl to surface the real registry response body
-      # (npm hides it behind a generic E403). Either this publishes 3.0.0 or prints
-      # the exact policy error.
-      - name: Manual OIDC publish
+      # Preferred path is the standard `npm publish` (with provenance). During the 3.0.0
+      # release the npm CLI publish returned a generic E403 against this package's
+      # publishing-access policy even though the OIDC trusted-publisher auth succeeded,
+      # while a direct OIDC-authenticated PUT published fine. The fallback below keeps
+      # releases unblocked if that recurs; remove it once `npm publish` is confirmed working.
+      - name: Publish (OIDC trusted publisher)
         run: |
+          set -o pipefail
+          if npm publish --provenance --access public; then
+            echo "Published via 'npm publish' (with provenance)."
+            exit 0
+          fi
+
+          echo "::warning::'npm publish' failed; falling back to direct OIDC publish (no provenance)."
           IDTOKEN=$(curl -s -H "authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value)
           NPMTOKEN=$(curl -s -X POST -H "authorization: Bearer $IDTOKEN" \
             https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/atlas-mysql | jq -r .token)
-          echo "oidc token: ${NPMTOKEN:+ok}"
+          [ -n "$NPMTOKEN" ] && [ "$NPMTOKEN" != "null" ] || { echo "OIDC token exchange failed"; exit 1; }
+
           npm pack
           node -e '
             const fs=require("fs"),c=require("crypto"),pkg=require("./package.json");
@@ -57,7 +71,8 @@ jobs:
               _attachments:{[tar]:{content_type:"application/octet-stream",data:buf.toString("base64"),length:buf.length}}};
             fs.writeFileSync("/tmp/doc.json",JSON.stringify(doc));
           '
-          echo "==== registry response ===="
-          curl -s -X PUT -H "authorization: Bearer $NPMTOKEN" -H 'content-type: application/json' \
-            https://registry.npmjs.org/atlas-mysql --data @/tmp/doc.json
-          echo
+          RESP=$(curl -s -X PUT -H "authorization: Bearer $NPMTOKEN" -H 'content-type: application/json' \
+            https://registry.npmjs.org/atlas-mysql --data @/tmp/doc.json)
+          echo "registry response: $RESP"
+          echo "$RESP" | grep -q '"success":true' || { echo "Fallback publish failed"; exit 1; }
+          echo "Published via direct OIDC PUT (provenance skipped)."

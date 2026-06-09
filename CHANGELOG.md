@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-06-09
+
+### Added
+- **Structured WHERE conditions**: `where` now accepts `{ column, op, value }` objects alongside
+  raw SQL strings. Columns are alias-resolved and escaped, operators are validated against a fixed
+  allow-list, and all values are bound as `?` placeholders — eliminating the raw-SQL injection
+  surface for filters. Supports `=`, `!=`, `<>`, `<`, `>`, `<=`, `>=`, `<=>`, `LIKE`, `NOT LIKE`,
+  `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`, `BETWEEN`, `NOT BETWEEN`, with safe handling of empty
+  `IN`/`NOT IN`. Backward compatible — existing raw-string `where` arrays are unchanged.
+- **Injectable logging sink**: `QueryLoggerConfig.logger` lets you route console output to a custom
+  `{ log, error }` sink (defaults to the global `console`).
+
+### Changed
+- **`chalk` is no longer a runtime dependency.** Console colouring is handled by a tiny internal
+  zero-dependency helper that respects `NO_COLOR`/`FORCE_COLOR` and TTY detection. The only runtime
+  dependency is now `mysql2`.
+
+### Docs
+- Repositioned as a **typed query builder** rather than a full ORM; documented that `getData<T>()`
+  result typing is a compile-time convenience, not a runtime guarantee (rows are cast, not validated).
+- Reframed the SQL-injection section around parameter binding + structured conditions, with the
+  raw-string `validateSqlClause` pattern check described as defence-in-depth, not a primary control.
+
 ## [3.0.0] - 2026-06-09
 
 ### Added
