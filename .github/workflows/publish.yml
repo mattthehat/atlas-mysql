@@ -35,4 +35,12 @@ jobs:
 
       # No NODE_AUTH_TOKEN: auth is handled by the OIDC trusted publisher
       # configured for this package (mattthehat/atlas-mysql -> publish.yml).
-      - run: npm publish --provenance --access public
+      - name: Publish (diagnostic)
+        run: |
+          echo "npm: $(npm --version)"
+          echo "OIDC request url present: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}${ACTIONS_ID_TOKEN_REQUEST_URL:-NO}"
+          npm publish --provenance --access public --loglevel verbose || {
+            echo "==================== npm debug log ===================="
+            cat /home/runner/.npm/_logs/*-debug-0.log || true
+            exit 1
+          }
