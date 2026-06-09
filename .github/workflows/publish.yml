@@ -33,6 +33,31 @@ jobs:
 
       - run: npm run clean && npm run build
 
-      # Auth handled by the OIDC trusted publisher (mattthehat/atlas-mysql -> publish.yml).
-      # Publishing without --provenance to isolate whether provenance is the 403 cause.
-      - run: npm publish --access public
+      # Manual publish via curl to surface the real registry response body
+      # (npm hides it behind a generic E403). Either this publishes 3.0.0 or prints
+      # the exact policy error.
+      - name: Manual OIDC publish
+        run: |
+          IDTOKEN=$(curl -s -H "authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value)
+          NPMTOKEN=$(curl -s -X POST -H "authorization: Bearer $IDTOKEN" \
+            https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/atlas-mysql | jq -r .token)
+          echo "oidc token: ${NPMTOKEN:+ok}"
+          npm pack
+          node -e '
+            const fs=require("fs"),c=require("crypto"),pkg=require("./package.json");
+            const tar=pkg.name+"-"+pkg.version+".tgz";
+            const buf=fs.readFileSync(tar);
+            const integrity="sha512-"+c.createHash("sha512").update(buf).digest("base64");
+            const shasum=c.createHash("sha1").update(buf).digest("hex");
+            const ver={...pkg,_id:pkg.name+"@"+pkg.version,dist:{integrity,shasum,
+              tarball:"https://registry.npmjs.org/"+pkg.name+"/-/"+tar}};
+            const doc={_id:pkg.name,name:pkg.name,description:pkg.description||"",
+              "dist-tags":{latest:pkg.version},versions:{[pkg.version]:ver},
+              _attachments:{[tar]:{content_type:"application/octet-stream",data:buf.toString("base64"),length:buf.length}}};
+            fs.writeFileSync("/tmp/doc.json",JSON.stringify(doc));
+          '
+          echo "==== registry response ===="
+          curl -s -X PUT -H "authorization: Bearer $NPMTOKEN" -H 'content-type: application/json' \
+            https://registry.npmjs.org/atlas-mysql --data @/tmp/doc.json
+          echo
