@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-06-10
+
+### Docs
+- README refresh: reframed around inferred result types (`fields` / `col<T>()`), added an
+  "Upgrading to 4.x" migration section, documented structured vs raw-string `where`, the
+  injectable logger sink, and the removal of `chalk` as a runtime dependency. No code changes.
+
 ## [4.1.0] - 2026-06-10
 
 ### Added
