@@ -2386,4 +2386,46 @@ describe('MySQL ORM', () => {
       ).rejects.toThrow();
     });
   });
+
+  describe('typed columns (col)', () => {
+    it('selects a typed column as an escaped identifier', async () => {
+      const { col } = await import('../src/mysql-orm');
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      await mysqlOrm.getData({
+        table: 'users',
+        idField: 'id',
+        fields: { id: col<number>('user_id'), name: col<string>('full_name') },
+      });
+
+      const [query] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('`user_id` AS `id`');
+      expect(query).toContain('`full_name` AS `name`');
+    });
+
+    it('treats a typed column expression as raw, and resolves its alias in where', async () => {
+      const { col } = await import('../src/mysql-orm');
+      const mysql = await import('mysql2/promise');
+      const pool = mysql.default.createPool({} as any);
+      vi.mocked(pool.query)
+        .mockResolvedValueOnce([[], []] as any)
+        .mockResolvedValueOnce([[{ count: 0 }], []] as any);
+
+      await mysqlOrm.getData({
+        table: 'orders',
+        idField: 'id',
+        fields: { id: col<number>('order_id'), total: col<number>('COUNT(*)') },
+        where: [{ column: 'id', op: '=', value: 7 }],
+      });
+
+      const [query, values] = vi.mocked(pool.query).mock.calls[0];
+      expect(query).toContain('COUNT(*) AS `total`'); // expression, not identifier-escaped
+      expect(query).toContain('`order_id` = ?'); // alias resolved from the typed column
+      expect(values).toEqual([7]);
+    });
+  });
 });

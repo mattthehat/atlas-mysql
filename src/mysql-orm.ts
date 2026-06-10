@@ -20,9 +20,37 @@ export interface MySQLORMConfig {
 }
 
 /**
- * Field value type - either a column name (string), raw SQL, or a subquery
+ * A column reference that carries a TypeScript value type `V`, produced by {@link col}.
+ * Lets result-type inference yield real value types (not just `unknown`) without a schema.
+ * The `__type` member is phantom — it is never present at runtime.
  */
-export type FieldValue = string | { raw: string } | QueryConfig;
+export type TypedColumn<V = unknown> = {
+  readonly __column: string;
+  readonly __type: V;
+};
+
+/**
+ * Mark a selected field as a typed column so result inference produces a real value type.
+ *
+ * @example
+ * const { rows } = await orm.getData({
+ *   table: 'users', idField: 'id',
+ *   fields: { id: col<number>('user_id'), name: col<string>('full_name') },
+ * });
+ * rows[0].id;   // typed as number
+ * rows[0].name; // typed as string
+ *
+ * @param column Column name or SQL expression to select
+ * @returns A typed column reference for use in a `fields` map
+ */
+export function col<V = unknown>(column: string): TypedColumn<V> {
+  return { __column: column } as TypedColumn<V>;
+}
+
+/**
+ * Field value type - a column name (string), a typed column ({@link col}), raw SQL, or a subquery
+ */
+export type FieldValue = string | { raw: string } | TypedColumn | QueryConfig;
 
 /**
  * Order by configuration - either a column name or an object with column and direction
@@ -148,14 +176,19 @@ export type QueryConfig<T extends Record<string, any> = Record<string, any>> = {
  */
 export type FieldMap = { [alias: string]: FieldValue };
 
+/** Extract the value type of a single selected field: the `V` of a {@link col} typed
+ *  column, otherwise `unknown` (a plain column string / raw SQL / subquery). */
+export type InferFieldValue<F> = F extends TypedColumn<infer V> ? V : unknown;
+
 /**
  * Row type inferred from a {@link FieldMap}: one property per selected alias.
  *
- * Without a database schema the SQL column type can't be known, so values are typed
- * as `unknown` — you still get key autocomplete and typo-catching on access, and can
- * narrow values as needed (or pass an explicit row type to override; see {@link MySQLORM.getData}).
+ * Plain string columns infer as `unknown` (the SQL type isn't known without a schema);
+ * fields wrapped with {@link col} infer their declared value type. You always get key
+ * autocomplete and typo-catching, and can pass an explicit row type to override entirely
+ * (see {@link MySQLORM.getData}).
  */
-export type InferRow<F extends FieldMap> = { [K in keyof F]: unknown };
+export type InferRow<F extends FieldMap> = { [K in keyof F]: InferFieldValue<F[K]> };
 
 /**
  * Result row resolution: when an explicit row type `T` is supplied it wins; otherwise
@@ -451,9 +484,18 @@ export class MySQLORM {
     if (fieldValue && typeof fieldValue === 'string') {
       return fieldValue;
     }
+    // A typed column ({@link col}) carries the underlying column name
+    if (this.isTypedColumn(fieldValue)) {
+      return fieldValue.__column;
+    }
 
     // Otherwise assume it's already a column name
     return fieldOrAlias;
+  }
+
+  /** Type guard for a {@link col}-produced typed column reference. */
+  private isTypedColumn(value: unknown): value is TypedColumn {
+    return this.isObject(value) && typeof (value as TypedColumn).__column === 'string';
   }
 
   /**
@@ -658,7 +700,10 @@ export class MySQLORM {
       const selectParts: string[] = [];
 
       for (const key in fields) {
-        const fieldValue = fields[key];
+        const rawField = fields[key];
+        // A typed column ({@link col}) resolves to its underlying column string and is
+        // then handled exactly like a plain string field (escaping / expression detection).
+        const fieldValue = this.isTypedColumn(rawField) ? rawField.__column : rawField;
 
         if (this.isObject(fieldValue) && !('raw' in fieldValue)) {
           // Handle subquery

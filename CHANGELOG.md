@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-06-10
+
+### Added
+- **Typed fields via `col<T>()`**: wrap a selected field with `col<number>('user_id')` to give it a
+  real inferred value type — so `getData()`/`getFirst()` results have typed values (`number`, `Date`,
+  …) without a schema or codegen. Plain string fields continue to infer as `unknown`. `col()` also
+  handles SQL expressions (`col<number>('COUNT(*)')`) and resolves as an alias in `where`/`orderBy`.
+- Exported `col`, plus types `TypedColumn`, `FieldMap`, `InferRow`, `InferFieldValue`, `ResolvedRow`,
+  `InferredQueryConfig`, and the structured-where types (`WhereCondition`, `WhereOperator`,
+  `WhereScalar`, `WhereEntry`).
+
 ## [4.0.0] - 2026-06-10
 
 ### Added

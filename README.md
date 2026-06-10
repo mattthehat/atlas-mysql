@@ -68,6 +68,7 @@ A type-safe **query builder** for MySQL on Node.js. It gives you composable, par
 
 - Type-safe queries with TypeScript support
 - Flexible query builder with method chaining
+- **NEW in v4.1.0**: `col<T>('column')` typed fields — opt into real inferred value types (e.g. `number`, `Date`) without a schema or codegen
 - **NEW in v4.0.0**: Inferred result types — `getData()` / `getFirst()` derive the row shape from your `fields` selection (keys typed, no schema, no codegen, no `<T>`); pass an explicit type to override
 - **NEW in v3.1.0**: Structured `where` conditions (`{ column, op, value }`) — fully parameterised and injection-safe, no raw SQL strings required
 - **NEW in v3.1.0**: Pluggable logging via an injectable console sink; `chalk` is no longer a runtime dependency (zero runtime deps beyond `mysql2`)
@@ -1038,7 +1039,30 @@ rows[0].name;  // ✅ known key (autocompletes)
 rows[0].nope;  // ❌ compile error: not a selected field
 ```
 
-Because there's no schema, value types are `unknown` — you get key safety, and narrow values where you use them (`Number(rows[0].id)`), or supply an explicit row type to type the values too:
+Because there's no schema, plain string columns infer with `unknown` value types — you get key safety, and narrow values where you use them (`Number(rows[0].id)`).
+
+To get **real value types without a schema or codegen**, wrap a field with `col<T>()` (v4.1.0):
+
+```typescript
+import { col } from 'atlas-mysql';
+
+const { rows } = await orm.getData({
+  table: 'users',
+  idField: 'user_id',
+  fields: {
+    id: col<number>('user_id'),
+    name: col<string>('full_name'),
+    createdAt: col<Date>('created_at'),
+    note: 'notes', // plain column → value typed as `unknown`
+  },
+});
+
+rows[0].id;        // number
+rows[0].name;      // string
+rows[0].createdAt; // Date
+```
+
+`col()` also works for expressions (`col<number>('COUNT(*)')`) and resolves as an alias in `where`/`orderBy` just like a plain column. Or, to type the whole row at once, supply an explicit row type which overrides inference:
 
 ```typescript
 interface User { id: number; name: string; email: string }
