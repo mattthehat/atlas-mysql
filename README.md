@@ -6,19 +6,21 @@
 
 A type-safe **query builder** for MySQL on Node.js. It gives you composable, parameterised query building, transactions, schema/DDL helpers, vector search, and query logging — without the heavyweight machinery of a full ORM.
 
-> **What it is (and isn't).** Atlas MySQL is a typed query builder, not a full ORM: there are no entity decorators, relations, lazy/eager loading, or migrations. That's deliberate — you write explicit, predictable SQL with type-checked aliases and parameter binding. Generic result types like `getData<User>()` describe the shape you expect; they are a **compile-time convenience, not a runtime guarantee** — rows are returned as-is from MySQL and cast to your type without validation.
+> **What it is (and isn't).** Atlas MySQL is a typed query builder, not a full ORM: there are no entity decorators, relations, lazy/eager loading, or migrations. That's deliberate — you write explicit, predictable SQL with type-checked aliases and parameter binding. Result types are **inferred from the `fields` you select** (no schema, no codegen) — wrap a field with `col<T>()` for real value types, or pass an explicit row type. Either way these are a **compile-time convenience, not a runtime guarantee**: rows are returned as-is from MySQL and cast, not validated.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Installation](#installation)
+- [Upgrading to 4.x](#upgrading-to-4x)
 - [Quick Start](#quick-start)
   - [Basic Setup](#basic-setup)
   - [Environment Variables](#environment-variables)
 - [Usage Examples](#usage-examples)
   - [Basic Queries](#basic-queries)
   - [Advanced Query Building](#advanced-query-building)
-  - [WHERE Clause Operators and Filtering](#where-clause-operators-and-filtering)
+  - [Structured WHERE conditions](#structured-where-conditions-recommended)
+  - [WHERE Clause Operators (raw strings)](#where-clause-operators-raw-strings)
   - [Field Alias Support](#field-alias-support)
   - [DISTINCT Support](#distinct-support)
   - [whereNotIn Support](#wherenotin-support)
@@ -110,6 +112,30 @@ Or with yarn:
 ```bash
 yarn add atlas-mysql mysql2
 ```
+
+## Upgrading to 4.x
+
+The 4.x line is a **type-level** evolution — runtime behaviour is unchanged, so JavaScript users and most TypeScript users need no code changes. The notes below are for TypeScript callers.
+
+**4.1.0 (additive, non-breaking)**
+- New `col<T>('column')` helper to give selected fields real inferred value types. Nothing to change; adopt it where you want typed values.
+
+**4.0.0 (breaking types only)**
+- `getData()` / `getFirst()` now **infer the row shape from your `fields`** when you don't pass a generic. Rows are keyed by your selected aliases with `unknown` value types (previously the result was loosely typed). If you relied on reading arbitrary properties off untyped results, either:
+  - wrap fields with `col<T>()` to type the values, or
+  - pass an explicit row type: `getData<User>({ ... })`, or
+  - narrow at the use site: `Number(rows[0].id)`.
+- The method generic `getData<T>()` still overrides the row type, but **no longer constrains `fields` keys to `keyof T`**. To keep that alias-key validation, type the config with `satisfies`:
+  ```typescript
+  const cfg = { table: 'users', idField: 'id', fields: { id: 'user_id' } } satisfies QueryConfig<User>;
+  const { rows } = await orm.getData<User>(cfg);
+  ```
+
+**3.x highlights still in effect**
+- `3.1.0` — structured `where` conditions (`{ column, op, value }`) and a pluggable logger sink; `chalk` is no longer a runtime dependency.
+- `3.0.0` — generic-aware field aliases, NULL-safe/grouped `count`, and removal of the never-supported `'FULL'` join type.
+
+See the [CHANGELOG](./CHANGELOG.md) for the full history.
 
 ## Quick Start
 
@@ -1626,7 +1652,23 @@ interface QueryLoggerConfig {
   slowQueryThreshold: number;     // Slow query threshold (ms)
   maxFileSize: number;            // Max log file size (bytes)
   rotateOnSize: boolean;          // Enable log rotation
+  logValues: boolean;             // Include parameter values (disable to redact)
+  logger?: Pick<Console, 'log' | 'error'>; // Injectable sink (default: console)
 }
+```
+
+**Pluggable output (v3.1.0).** Console output goes through an injectable sink, so you can route logs into your own logger instead of `console`. Colouring is handled by a tiny built-in helper that honours `NO_COLOR`/`FORCE_COLOR` and TTY detection — `chalk` is no longer a runtime dependency.
+
+```typescript
+import { initialiseQueryLogger } from 'atlas-mysql';
+import pino from 'pino';
+
+const log = pino();
+initialiseQueryLogger({
+  enabled: true,
+  logToConsole: true,
+  logger: { log: (m) => log.info(m), error: (m) => log.error(m) },
+});
 ```
 
 ## Security Features
