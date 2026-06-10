@@ -68,6 +68,7 @@ A type-safe **query builder** for MySQL on Node.js. It gives you composable, par
 
 - Type-safe queries with TypeScript support
 - Flexible query builder with method chaining
+- **NEW in v4.0.0**: Inferred result types — `getData()` / `getFirst()` derive the row shape from your `fields` selection (keys typed, no schema, no codegen, no `<T>`); pass an explicit type to override
 - **NEW in v3.1.0**: Structured `where` conditions (`{ column, op, value }`) — fully parameterised and injection-safe, no raw SQL strings required
 - **NEW in v3.1.0**: Pluggable logging via an injectable console sink; `chalk` is no longer a runtime dependency (zero runtime deps beyond `mysql2`)
 - **NEW in v3.0.0**: Generic-aware field aliases — `getData<T>()` / `getFirst<T>()` constrain `fields` keys to `keyof T`, so a typo'd or unknown alias is a compile error
@@ -1022,24 +1023,49 @@ When using subqueries:
 
 Atlas MySQL provides TypeScript support with type inference for your database operations.
 
-> **New in v3.0.0 — alias keys are checked against your row type.** When you pass a
-> generic to `QueryConfig<T>` (or call `getData<T>()` / `getFirst<T>()`), the keys of
-> `fields` are constrained to `keyof T`. A typo'd or unknown alias is now a **compile
-> error** instead of a silent runtime mismatch:
+#### Inferred result types (v4.0.0) — no schema, no codegen
+
+`getData()` and `getFirst()` derive the **shape of each row from the `fields` you select**. You don't declare a schema, run a code generator, or pass a generic — the selected aliases become the keys of the returned rows, with full autocomplete and typo-catching on access:
+
+```typescript
+const { rows } = await orm.getData({
+  table: 'users',
+  idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name', email: 'email_address' },
+});
+
+rows[0].name;  // ✅ known key (autocompletes)
+rows[0].nope;  // ❌ compile error: not a selected field
+```
+
+Because there's no schema, value types are `unknown` — you get key safety, and narrow values where you use them (`Number(rows[0].id)`), or supply an explicit row type to type the values too:
+
+```typescript
+interface User { id: number; name: string; email: string }
+
+// Explicit type overrides inference — rows are fully typed as User
+const { rows } = await orm.getData<User>({
+  table: 'users',
+  idField: 'user_id',
+  fields: { id: 'user_id', name: 'full_name', email: 'email_address' },
+});
+rows[0].id; // typed as number
+```
+
+> **Want your `fields` validated against an interface?** Type the config with
+> `satisfies QueryConfig<User>` — a typo'd or unknown alias becomes a **compile error**,
+> while result-type inference still works:
 >
 > ```typescript
-> const q: QueryConfig<User> = {
+> const q = {
 >   table: 'users',
 >   idField: 'user_id',
 >   fields: {
 >     id: 'user_id',
 >     naem: 'full_name', // ❌ TS error: 'naem' is not a key of User
 >   },
-> };
+> } satisfies QueryConfig<User>;
 > ```
->
-> Without a generic, `T` defaults to `Record<string, any>` and any string key is
-> allowed, so existing untyped queries keep working unchanged.
 
 ```typescript
 import { MySQLORM, QueryConfig } from 'atlas-mysql';

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-06-10
+
+### Added
+- **Inferred result types**: `getData()` and `getFirst()` now derive the returned row shape
+  directly from the `fields` you select — no schema, no codegen, no generic required. The
+  selected aliases become the row keys (with autocomplete and typo-catching on access); value
+  types are `unknown` since column types aren't known without a schema. Pass an explicit row
+  type (`getData<User>(...)`) to fully type values, or use `satisfies QueryConfig<User>` on the
+  config to validate that `fields` keys belong to your interface.
+- New exported helper types: `FieldMap`, `InferRow`, `ResolvedRow`, `InferredQueryConfig`.
+
+### Changed
+- **BREAKING (types)**: `getData()` / `getFirst()` no longer return `Record<string, any>`-style
+  rows when called without a type argument. They now return rows keyed by the selected `fields`
+  with `unknown` values. Code that read arbitrary/loose properties off untyped results may need to
+  narrow values or pass an explicit `<T>`. Runtime behaviour is unchanged.
+- **BREAKING (types)**: the method-level generic on `getData<T>()` / `getFirst<T>()` overrides the
+  inferred row type but no longer constrains `fields` keys to `keyof T`. To keep alias-key
+  validation against an interface, type the config with `satisfies QueryConfig<T>` (still supported).
+
 ## [3.1.0] - 2026-06-09
 
 ### Added

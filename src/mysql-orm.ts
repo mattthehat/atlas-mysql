@@ -143,6 +143,30 @@ export type QueryConfig<T extends Record<string, any> = Record<string, any>> = {
 };
 
 /**
+ * A field-selection map: result alias (key) → column / expression / subquery (value).
+ * The keys become the columns of the returned row.
+ */
+export type FieldMap = { [alias: string]: FieldValue };
+
+/**
+ * Row type inferred from a {@link FieldMap}: one property per selected alias.
+ *
+ * Without a database schema the SQL column type can't be known, so values are typed
+ * as `unknown` — you still get key autocomplete and typo-catching on access, and can
+ * narrow values as needed (or pass an explicit row type to override; see {@link MySQLORM.getData}).
+ */
+export type InferRow<F extends FieldMap> = { [K in keyof F]: unknown };
+
+/**
+ * Result row resolution: when an explicit row type `T` is supplied it wins; otherwise
+ * the row shape is inferred from the selected `fields`.
+ */
+export type ResolvedRow<T, F extends FieldMap> = unknown extends T ? InferRow<F> : T;
+
+/** A {@link QueryConfig} whose `fields` map is captured as `F` for result-type inference. */
+export type InferredQueryConfig<F extends FieldMap> = Omit<QueryConfig, 'fields'> & { fields: F };
+
+/**
  * Distance metric for vector similarity search (MySQL 9.0+)
  * - 'cosine': Cosine distance — best for text/semantic embeddings
  * - 'l2': Euclidean (L2) distance — best for geometric/spatial distance
@@ -832,11 +856,16 @@ export class MySQLORM {
    * @param values Parameter values for prepared statement
    * @returns Promise resolving to rows and total count
    */
-  public async getData<T extends Record<string, any>>(
-    query: QueryConfig<T>,
+  public async getData<T = unknown, F extends FieldMap = FieldMap>(
+    query: InferredQueryConfig<F>,
+    values?: Array<string | number | boolean | null>,
+    options?: { skipCount?: boolean }
+  ): Promise<{ rows: ResolvedRow<T, F>[]; count: number }>;
+  public async getData(
+    query: QueryConfig<any>,
     values: Array<string | number | boolean | null> = [],
     options?: { skipCount?: boolean }
-  ): Promise<{ rows: T[]; count: number }> {
+  ): Promise<{ rows: any[]; count: number }> {
     const queryLogger = getQueryLogger();
     const startTime = Date.now();
 
@@ -855,7 +884,7 @@ export class MySQLORM {
         queryLogger.logQuery(queryResult.query, allValues, duration);
 
         return {
-          rows: rowsResult as T[],
+          rows: rowsResult as any[],
           count: -1,
         };
       }
@@ -876,7 +905,7 @@ export class MySQLORM {
 
       const countResult = (countRows as Array<{ count: number }>)[0];
       return {
-        rows: rows as T[],
+        rows: rows as any[],
         count: countResult?.count || 0,
       };
     } catch (error) {
@@ -899,10 +928,14 @@ export class MySQLORM {
    * @param values Parameter values for prepared statement
    * @returns Promise resolving to first matching record or null
    */
-  public async getFirst<T extends Record<string, any>>(
-    query: QueryConfig<T>,
+  public async getFirst<T = unknown, F extends FieldMap = FieldMap>(
+    query: InferredQueryConfig<F>,
+    values?: Array<string | number | boolean | null>
+  ): Promise<ResolvedRow<T, F> | null>;
+  public async getFirst(
+    query: QueryConfig<any>,
     values: Array<string | number | boolean | null> = []
-  ): Promise<T | null> {
+  ): Promise<any | null> {
     const queryLogger = getQueryLogger();
     const startTime = Date.now();
 
@@ -922,7 +955,7 @@ export class MySQLORM {
       const duration = Date.now() - startTime;
       queryLogger.logQuery(queryResult.query, allValues, duration);
 
-      return (rows as T[])[0] || null;
+      return (rows as any[])[0] || null;
     } catch (error) {
       if (error instanceof Error) {
         queryLogger.logError(queryResult.query, error, allValues);
